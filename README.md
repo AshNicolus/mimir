@@ -1,5 +1,9 @@
 # Mimir
 
+[![PyPI](https://img.shields.io/pypi/v/mimir-learn.svg)](https://pypi.org/project/mimir-learn/)
+[![Python](https://img.shields.io/pypi/pyversions/mimir-learn.svg)](https://pypi.org/project/mimir-learn/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Experience-driven memory for autonomous agents.** Mimir helps agents learn from their past successes and failures instead of starting from scratch on every task.
 
 > Named after Mímir, the keeper of wisdom in Norse mythology.
@@ -114,10 +118,19 @@ Reflection (derived)  summary, pattern, supporting_experience_ids, created_at
 ## Installation
 
 ```bash
-pip install mimir   # (coming soon)
+pip install mimir-learn
+```
 
-# or, for development
-git clone https://github.com/<you>/mimir.git
+The distribution is named `mimir-learn` on PyPI, but you import it as `mimir`:
+
+```python
+from mimir import Mimir
+```
+
+For development:
+
+```bash
+git clone https://github.com/AshNicolus/mimir.git
 cd mimir
 pip install -e ".[dev]"
 ```
@@ -155,11 +168,11 @@ print(memory.recommend("login times out under load"))
 
 | Phase | Goal | Status |
 |---|---|---|
-| **1 — Episodic memory** | `record()` / `recall()`, outcome tracking, SQLite backend | 🛠️ In progress |
-| **2 — Failure memory** | `record_failure()`, failures queried separately | Planned |
+| **1 — Episodic memory** | `record()` / `recall()`, outcome tracking, SQLite backend | ✅ Done |
+| **2 — Failure memory** | `record_failure()`, failures queried separately | ✅ Done |
 | **3 — Reflection engine** | `reflect()` — cluster experiences, synthesize patterns (LLM) | Planned |
 | **4 — Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
-| **5 — Recommendation engine** | `recommend()` — rank strategies for a new task | Planned |
+| **5 — Recommendation engine** | `recommend()` — rank strategies for a new task | 🛠️ Basic (non-LLM aggregation) |
 | **6 — Shared org memory** | Multiple agents learn from a shared store | Future |
 
 ## Scaling path
@@ -173,7 +186,7 @@ Mimir starts as a single SQLite file and grows by swapping seams — no rewrites
 
 ## Status
 
-Early development. APIs will change. Not yet published to PyPI. Feedback and ideas welcome.
+Alpha (`0.1.0`) — **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Phase 1 (episodic + failure memory) is complete and tested; the recommendation engine works today via outcome aggregation (no LLM). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
