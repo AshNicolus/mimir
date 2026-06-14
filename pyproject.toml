@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mimir-memory"
+version = "0.1.0"
+description = "Experience-driven memory for autonomous agents — learn from past successes and failures."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "AshNicolus" }]
+keywords = ["agents", "memory", "llm", "experience", "learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+# Local semantic search (optional). Keyword recall works without this.
+embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
+
+[project.urls]
+Homepage = "https://github.com/AshNicolus/mimir"
+Repository = "https://github.com/AshNicolus/mimir"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mimir"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
