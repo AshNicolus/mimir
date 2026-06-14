@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mimir-memory"
+name = "mimir-learn"
 version = "0.1.0"
 description = "Experience-driven memory for autonomous agents — learn from past successes and failures."
 readme = "README.md"
