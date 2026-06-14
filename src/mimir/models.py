@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def _now() -> datetime:
@@ -44,6 +44,14 @@ class Experience(BaseModel):
     embedding: list[float] | None = None  # set only when an embedder is configured
     created_at: datetime = Field(default_factory=_now)
     superseded_by: str | None = None  # for staleness/versioning (future use)
+
+    @field_validator("task", "action")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be empty or whitespace")
+        return cleaned
 
     def text(self) -> str:
         """The text Mimir indexes and embeds for retrieval."""
