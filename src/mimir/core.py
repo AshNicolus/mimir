@@ -1,0 +1,183 @@
+"""The Mimir public API.
+
+Everything users touch goes through this class. All writes funnel through a
+single chokepoint (`_write`) — that one method is the seam where validation,
+provenance tagging, and (future) a memory-firewall layer plug in without
+touching the rest of the system.
+"""
+
+from __future__ import annotations
+
+import math
+import threading
+from collections import defaultdict
+
+from .embeddings import Embedder, NullEmbedder, cosine_similarity
+from .models import Experience, Outcome, Recommendation
+from .storage import SQLiteStorage, Storage
+
+
+class Mimir:
+    def __init__(
+        self,
+        db_path: str = "mimir.db",
+        *,
+        storage: Storage | None = None,
+        embedder: Embedder | None = None,
+    ) -> None:
+        self._storage = storage or SQLiteStorage(db_path)
+        self._embedder = embedder or NullEmbedder()
+        self._lock = threading.Lock()
+
+    # -- writes -------------------------------------------------------------
+
+    def record(
+        self,
+        task: str,
+        action: str,
+        outcome: str | Outcome = Outcome.SUCCESS,
+        score: float | None = None,
+        context: dict | None = None,
+    ) -> Experience:
+        """Record an experience: a task, the action taken, and how it went."""
+        outcome = Outcome(outcome) if not isinstance(outcome, Outcome) else outcome
+        if score is None:
+            score = _default_score(outcome)
+        exp = Experience(
+            task=task,
+            action=action,
+            outcome=outcome,
+            score=score,
+            context=context or {},
+        )
+        return self._write(exp)
+
+    def record_failure(
+        self,
+        task: str,
+        action: str,
+        reason: str | None = None,
+        score: float = 0.0,
+        context: dict | None = None,
+    ) -> Experience:
+        """Record a failure. Stored like any experience but with outcome=failure,
+        so agents can recall what *didn't* work and stop repeating it."""
+        ctx = dict(context or {})
+        if reason:
+            ctx["failure_reason"] = reason
+        return self.record(task, action, outcome=Outcome.FAILURE, score=score, context=ctx)
+
+    def _write(self, exp: Experience) -> Experience:
+        """The single write chokepoint. Validation/provenance/firewall hooks go here."""
+        with self._lock:
+            if self._embedder.enabled and exp.embedding is None:
+                exp.embedding = self._embedder.embed(exp.text())
+            self._storage.add(exp)
+        return exp
+
+    # -- reads --------------------------------------------------------------
+
+    def recall(
+        self,
+        query: str,
+        k: int = 5,
+        outcome: str | Outcome | None = None,
+        context: dict | None = None,
+    ) -> list[Experience]:
+        """Return the most relevant past experiences for ``query``."""
+        outcome_val = outcome.value if isinstance(outcome, Outcome) else outcome
+        # Pull a wider candidate set so optional embedding rerank has room to work.
+        candidates = self._storage.search(
+            query, k=max(k * 4, k), outcome=outcome_val, context=context
+        )
+        if self._embedder.enabled:
+            candidates = self._rerank(query, candidates)
+        return [exp for exp, _ in candidates[:k]]
+
+    def recommend(self, task: str, k: int = 20) -> Recommendation | None:
+        """Suggest a strategy for a new task by aggregating similar past
+        experiences. Returns None if there's nothing relevant to go on.
+
+        Confidence is the Wilson lower bound of the success rate for the
+        recommended action — so an action that worked 9/10 times outranks one
+        that worked 1/1 time (small samples are penalised, as they should be).
+        """
+        candidates = self._storage.search(task, k=k)
+        if not candidates:
+            return None
+
+        groups: dict[str, list[tuple[Experience, float]]] = defaultdict(list)
+        for exp, rel in candidates:
+            groups[_normalize(exp.action)].append((exp, rel))
+
+        best: Recommendation | None = None
+        for action_key, items in groups.items():
+            succ = sum(1 for e, _ in items if e.outcome is Outcome.SUCCESS)
+            fail = sum(1 for e, _ in items if e.outcome is Outcome.FAILURE)
+            part = sum(1 for e, _ in items if e.outcome is Outcome.PARTIAL)
+            total = len(items)
+            effective_successes = succ + 0.5 * part
+            confidence = _wilson_lower_bound(effective_successes, total)
+            # Use the most relevant phrasing of the action as the display string.
+            display_action = max(items, key=lambda pair: pair[1])[0].action
+            rec = Recommendation(
+                task=task,
+                recommended_action=display_action,
+                confidence=confidence,
+                success_count=succ,
+                failure_count=fail,
+                partial_count=part,
+                based_on=total,
+                supporting_ids=[e.id for e, _ in items],
+            )
+            if best is None or rec.confidence > best.confidence:
+                best = rec
+        return best
+
+    def _rerank(
+        self, query: str, candidates: list[tuple[Experience, float]]
+    ) -> list[tuple[Experience, float]]:
+        qvec = self._embedder.embed(query)
+        rescored = []
+        for exp, kw_score in candidates:
+            sem = cosine_similarity(qvec, exp.embedding) if exp.embedding else 0.0
+            # Blend keyword and semantic relevance.
+            rescored.append((exp, 0.5 * kw_score + 0.5 * sem))
+        rescored.sort(key=lambda pair: pair[1], reverse=True)
+        return rescored
+
+    # -- misc ---------------------------------------------------------------
+
+    def count(self) -> int:
+        return self._storage.count()
+
+    def close(self) -> None:
+        self._storage.close()
+
+    def __enter__(self) -> "Mimir":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+def _default_score(outcome: Outcome) -> float:
+    return {Outcome.SUCCESS: 1.0, Outcome.PARTIAL: 0.5, Outcome.FAILURE: 0.0}[outcome]
+
+
+def _normalize(action: str) -> str:
+    return " ".join(action.lower().split())
+
+
+def _wilson_lower_bound(successes: float, total: int, z: float = 1.96) -> float:
+    """Lower bound of a Wilson score interval for a binomial proportion.
+
+    Rewards both a high success rate and a large sample size.
+    """
+    if total == 0:
+        return 0.0
+    phat = successes / total
+    denom = 1 + z * z / total
+    centre = phat + z * z / (2 * total)
+    margin = z * math.sqrt((phat * (1 - phat) + z * z / (4 * total)) / total)
+    return max(0.0, (centre - margin) / denom)
