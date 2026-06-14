@@ -36,6 +36,14 @@ class Storage(ABC):
         """
 
     @abstractmethod
+    def delete(self, experience_id: str) -> bool:
+        """Remove one experience. Returns True if it existed."""
+
+    @abstractmethod
+    def recent(self, n: int = 10) -> list[Experience]:
+        """Return the ``n`` most recently recorded experiences, newest first."""
+
+    @abstractmethod
     def count(self) -> int:
         """Total number of stored experiences."""
 

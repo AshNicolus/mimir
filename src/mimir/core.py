@@ -8,6 +8,7 @@ touching the rest of the system.
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 from collections import defaultdict
@@ -69,6 +70,11 @@ class Mimir:
 
     def _write(self, exp: Experience) -> Experience:
         """The single write chokepoint. Validation/provenance/firewall hooks go here."""
+        # Fail fast with a clear message rather than crashing deep in storage.
+        try:
+            json.dumps(exp.context)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"context must be JSON-serializable: {exc}") from exc
         with self._lock:
             if self._embedder.enabled and exp.embedding is None:
                 exp.embedding = self._embedder.embed(exp.text())
@@ -93,6 +99,18 @@ class Mimir:
         if self._embedder.enabled:
             candidates = self._rerank(query, candidates)
         return [exp for exp, _ in candidates[:k]]
+
+    def get(self, experience_id: str) -> Experience | None:
+        """Fetch a single experience by id, or None if it doesn't exist."""
+        return self._storage.get(experience_id)
+
+    def delete(self, experience_id: str) -> bool:
+        """Delete an experience by id. Returns True if it existed."""
+        return self._storage.delete(experience_id)
+
+    def recent(self, n: int = 10) -> list[Experience]:
+        """Return the ``n`` most recently recorded experiences, newest first."""
+        return self._storage.recent(n)
 
     def recommend(self, task: str, k: int = 20) -> Recommendation | None:
         """Suggest a strategy for a new task by aggregating similar past
