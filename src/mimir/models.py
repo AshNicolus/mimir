@@ -13,11 +13,11 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 
 
-def _now() -> datetime:
+def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _new_id() -> str:
+def new_id() -> str:
     return uuid.uuid4().hex
 
 
@@ -35,14 +35,14 @@ class Experience(BaseModel):
     This is the atomic unit Mimir stores and learns from.
     """
 
-    id: str = Field(default_factory=_new_id)
+    id: str = Field(default_factory=new_id)
     task: str  # the problem being solved
     action: str  # what was actually done
     outcome: Outcome = Outcome.SUCCESS
     score: float = Field(default=1.0, ge=0.0, le=1.0)  # quality/confidence of the outcome
     context: dict = Field(default_factory=dict)  # env, tags, agent_id, domain, ...
     embedding: list[float] | None = None  # set only when an embedder is configured
-    created_at: datetime = Field(default_factory=_now)
+    created_at: datetime = Field(default_factory=utcnow)
     superseded_by: str | None = None  # for staleness/versioning (future use)
 
     @field_validator("task", "action")

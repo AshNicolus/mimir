@@ -43,7 +43,7 @@ class Mimir:
         """Record an experience: a task, the action taken, and how it went."""
         outcome = Outcome(outcome) if not isinstance(outcome, Outcome) else outcome
         if score is None:
-            score = _default_score(outcome)
+            score = default_score(outcome)
         exp = Experience(
             task=task,
             action=action,
@@ -125,7 +125,7 @@ class Mimir:
 
         groups: dict[str, list[tuple[Experience, float]]] = defaultdict(list)
         for exp, rel in candidates:
-            groups[_normalize(exp.action)].append((exp, rel))
+            groups[normalize_action(exp.action)].append((exp, rel))
 
         best: Recommendation | None = None
         for action_key, items in groups.items():
@@ -136,7 +136,7 @@ class Mimir:
             effective_successes = succ + 0.5 * part
             if effective_successes == 0:
                 continue  # never recommend an action with no wins
-            confidence = _wilson_lower_bound(effective_successes, total)
+            confidence = wilson_lower_bound(effective_successes, total)
             # Use the most relevant phrasing of the action as the display string.
             display_action = max(items, key=lambda pair: pair[1])[0].action
             rec = Recommendation(
@@ -180,15 +180,15 @@ class Mimir:
         self.close()
 
 
-def _default_score(outcome: Outcome) -> float:
+def default_score(outcome: Outcome) -> float:
     return {Outcome.SUCCESS: 1.0, Outcome.PARTIAL: 0.5, Outcome.FAILURE: 0.0}[outcome]
 
 
-def _normalize(action: str) -> str:
+def normalize_action(action: str) -> str:
     return " ".join(action.lower().split())
 
 
-def _wilson_lower_bound(successes: float, total: int, z: float = 1.96) -> float:
+def wilson_lower_bound(successes: float, total: int, z: float = 1.96) -> float:
     """Lower bound of a Wilson score interval for a binomial proportion.
 
     Rewards both a high success rate and a large sample size.
