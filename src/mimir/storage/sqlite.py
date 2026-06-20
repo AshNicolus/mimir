@@ -22,9 +22,21 @@ from .base import Storage
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
+# Common function words that add retrieval noise without signal.
+_STOPWORDS = frozenset(
+    "a an the is are was were be been to of in on for and or it this that with "
+    "as at by from how what i my we".split()
+)
+
 
 def _tokens(text: str) -> list[str]:
     return _TOKEN.findall(text.lower())
+
+
+def _query_terms(query: str) -> list[str]:
+    terms = _tokens(query)
+    meaningful = [t for t in terms if t not in _STOPWORDS]
+    return meaningful or terms  # fall back if the query is all stopwords
 
 
 class SQLiteStorage(Storage):
@@ -165,7 +177,7 @@ class SQLiteStorage(Storage):
         return results
 
     def _fts_search(self, query: str) -> list[tuple[Experience, float]]:
-        terms = _tokens(query)
+        terms = _query_terms(query)
         if not terms:
             return []
         match = " OR ".join(f'"{t}"' for t in terms)
@@ -187,7 +199,7 @@ class SQLiteStorage(Storage):
         return out
 
     def _fallback_search(self, query: str) -> list[tuple[Experience, float]]:
-        q = set(_tokens(query))
+        q = set(_query_terms(query))
         if not q:
             return []
         with self._lock:
