@@ -93,6 +93,19 @@ def test_recommend_returns_none_without_data(memory):
     assert memory.recommend("anything at all") is None
 
 
+def test_recommend_ignores_actions_that_only_failed(memory):
+    memory.record_failure("deploy fails", "force push", reason="broke prod")
+    assert memory.recommend("deploy fails") is None
+
+
+def test_recommend_skips_failed_action_for_a_proven_one(memory):
+    memory.record_failure("deploy fails", "force push")
+    memory.record("deploy fails", "run migrations first", outcome="success")
+    rec = memory.recommend("deploy fails")
+    assert rec is not None
+    assert rec.recommended_action == "run migrations first"
+
+
 def test_recommendation_str_is_readable(memory):
     memory.record("auth slow", "Redis caching", outcome="success")
     rec = memory.recommend("auth slow")

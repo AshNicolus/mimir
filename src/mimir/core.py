@@ -134,6 +134,8 @@ class Mimir:
             part = sum(1 for e, _ in items if e.outcome is Outcome.PARTIAL)
             total = len(items)
             effective_successes = succ + 0.5 * part
+            if effective_successes == 0:
+                continue  # never recommend an action with no wins
             confidence = _wilson_lower_bound(effective_successes, total)
             # Use the most relevant phrasing of the action as the display string.
             display_action = max(items, key=lambda pair: pair[1])[0].action
