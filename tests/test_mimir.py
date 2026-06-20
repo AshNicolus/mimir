@@ -46,6 +46,14 @@ def test_search_with_zero_limit_returns_empty(memory):
     assert memory._storage.search("task", k=0) == []
 
 
+def test_recall_ignores_common_stopwords(memory):
+    memory.record("improve database latency", "add an index")
+    memory.record("the weather is nice today", "go outside")
+    results = memory.recall("what is the latency")
+    assert len(results) == 1
+    assert results[0].action == "add an index"
+
+
 def test_record_failure_is_queryable_separately(memory):
     memory.record_failure(
         "Throttle abusive clients",
