@@ -1,0 +1,28 @@
+name: Benchmark
+
+# Runs the same workload on this PR and on its base, on one runner, and posts
+# a comparison to the run summary. Informational: never fails the build.
+on:
+  pull_request:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Benchmark PR vs base
+        run: |
+          cp -r benchmarks /tmp/bench
+          python /tmp/bench/run.py > /tmp/head.json
+          git checkout -q ${{ github.event.pull_request.base.sha }}
+          python /tmp/bench/run.py > /tmp/base.json
+          python /tmp/bench/compare.py /tmp/base.json /tmp/head.json | tee -a "$GITHUB_STEP_SUMMARY"
