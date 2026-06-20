@@ -29,12 +29,12 @@ _STOPWORDS = frozenset(
 )
 
 
-def _tokens(text: str) -> list[str]:
+def tokenize(text: str) -> list[str]:
     return _TOKEN.findall(text.lower())
 
 
-def _query_terms(query: str) -> list[str]:
-    terms = _tokens(query)
+def query_terms(query: str) -> list[str]:
+    terms = tokenize(query)
     meaningful = [t for t in terms if t not in _STOPWORDS]
     return meaningful or terms  # fall back if the query is all stopwords
 
@@ -171,13 +171,13 @@ class SQLiteStorage(Storage):
                 break
             if outcome is not None and exp.outcome.value != outcome:
                 continue
-            if context and not _context_matches(exp.context, context):
+            if context and not context_matches(exp.context, context):
                 continue
             results.append((exp, score))
         return results
 
     def _fts_search(self, query: str) -> list[tuple[Experience, float]]:
-        terms = _query_terms(query)
+        terms = query_terms(query)
         if not terms:
             return []
         match = " OR ".join(f'"{t}"' for t in terms)
@@ -199,7 +199,7 @@ class SQLiteStorage(Storage):
         return out
 
     def _fallback_search(self, query: str) -> list[tuple[Experience, float]]:
-        q = set(_query_terms(query))
+        q = set(query_terms(query))
         if not q:
             return []
         with self._lock:
@@ -207,7 +207,7 @@ class SQLiteStorage(Storage):
         scored = []
         for row in rows:
             exp = self._row_to_experience(row)
-            doc = set(_tokens(exp.text()))
+            doc = set(tokenize(exp.text()))
             if not doc:
                 continue
             overlap = len(q & doc)
@@ -238,5 +238,5 @@ class SQLiteStorage(Storage):
             self._conn.close()
 
 
-def _context_matches(stored: dict, wanted: dict) -> bool:
+def context_matches(stored: dict, wanted: dict) -> bool:
     return all(stored.get(key) == value for key, value in wanted.items())

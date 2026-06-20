@@ -37,7 +37,7 @@ Instead of storing documents, embeddings, and metadata, Mimir stores **experienc
 Problem  →  Action  →  Outcome  →  Confidence  →  Context  →  Time
 ```
 
-From a stream of experiences, Mimir reflects, extracts reusable strategies, and recommends actions for new tasks — so the agent gets measurably better over time.
+From a stream of experiences, Mimir reflects, extracts reusable strategies, and recommends actions for new tasks, so the agent gets measurably better over time.
 
 ```python
 from mimir import Mimir
@@ -67,14 +67,14 @@ strategy = memory.recommend("login timeout")
 | Knowledge type | Static, hand-written rules | Dynamic, learned from outcomes |
 | Updates | Manually edited | Updates itself from results |
 | Example | "Use FastAPI. Use PostgreSQL." | "Redis caching solved auth latency 23/25 times (92%)." |
-| Failures | Not tracked | First-class — agents stop repeating mistakes |
+| Failures | Not tracked | First-class: agents stop repeating mistakes |
 
 AGENTS.md answers *"What should the agent remember?"*
 Mimir answers *"How does an agent accumulate experience and become wiser over time?"*
 
 ## Design principles
 
-Mimir is built as a **modular monolith Python library** — not a microservice swarm, not a managed cloud product. The library is the product.
+Mimir is built as a **modular monolith Python library**, not a microservice swarm or managed cloud product. The library is the product.
 
 - **No LLM and no web server required for v1.** Storage, retrieval, and ranking come first. Reflection via an LLM is added later, behind an interface.
 - **Pluggable seams.** Storage, embeddings, and the write path are interfaces, so scaling up (SQLite → Postgres → async reflection → Redis cache) is a swap, never a rewrite.
@@ -135,7 +135,7 @@ cd mimir
 pip install -e ".[dev]"
 ```
 
-**Requirements:** Python 3.11+. v1 has no required external services — storage is a local SQLite file. Semantic search and reflection are optional extras.
+**Requirements:** Python 3.11+. v1 has no required external services: storage is a local SQLite file. Semantic search and reflection are optional extras.
 
 ## Quick start
 
@@ -155,7 +155,7 @@ memory.record(
 memory.record_failure(
     task="Throttle abusive clients",
     action="Added a fixed-window rate limiter",
-    reason="WebSocket traffic wasn't handled — limiter only saw HTTP",
+    reason="WebSocket traffic wasn't handled; limiter only saw HTTP",
 )
 
 for exp in memory.recall("authentication is slow", k=5):
@@ -168,25 +168,25 @@ print(memory.recommend("login times out under load"))
 
 | Phase | Goal | Status |
 |---|---|---|
-| **1 — Episodic memory** | `record()` / `recall()`, outcome tracking, SQLite backend | ✅ Done |
-| **2 — Failure memory** | `record_failure()`, failures queried separately | ✅ Done |
-| **3 — Reflection engine** | `reflect()` — cluster experiences, synthesize patterns (LLM) | Planned |
-| **4 — Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
-| **5 — Recommendation engine** | `recommend()` — rank strategies for a new task | 🛠️ Basic (non-LLM aggregation) |
-| **6 — Shared org memory** | Multiple agents learn from a shared store | Future |
+| **1: Episodic memory** | `record()` / `recall()`, outcome tracking, SQLite backend | ✅ Done |
+| **2: Failure memory** | `record_failure()`, failures queried separately | ✅ Done |
+| **3: Reflection engine** | `reflect()`: cluster experiences, synthesize patterns (LLM) | Planned |
+| **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
+| **5: Recommendation engine** | `recommend()`: rank strategies for a new task | 🛠️ Basic (non-LLM aggregation) |
+| **6: Shared org memory** | Multiple agents learn from a shared store | Future |
 
 ## Scaling path
 
-Mimir starts as a single SQLite file and grows by swapping seams — no rewrites:
+Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
-1. **v1** — SQLite, in-process, single agent.
-2. **v2** — Postgres + pgvector backend for concurrent multi-agent writes.
-3. **v3** — extract the (slow, batch) reflection engine into an async worker.
-4. **v4** — Redis cache for hot/recent experiences on the read path.
+1. **v1**: SQLite, in-process, single agent.
+2. **v2**: Postgres + pgvector backend for concurrent multi-agent writes.
+3. **v3**: extract the (slow, batch) reflection engine into an async worker.
+4. **v4**: Redis cache for hot/recent experiences on the read path.
 
 ## Status
 
-Alpha (`0.1.0`) — **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Phase 1 (episodic + failure memory) is complete and tested; the recommendation engine works today via outcome aggregation (no LLM). APIs may still change before `1.0`. Feedback and ideas welcome.
+Alpha (`0.1.1`): **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Phase 1 (episodic + failure memory) is complete and tested; the recommendation engine works today via outcome aggregation (no LLM). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
