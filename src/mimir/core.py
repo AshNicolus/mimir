@@ -112,15 +112,14 @@ class Mimir:
         """Return the ``n`` most recently recorded experiences, newest first."""
         return self._storage.recent(n)
 
-    def recommend(self, task: str, k: int = 20) -> Recommendation | None:
+    def recommend(self, task: str) -> Recommendation | None:
         """Suggest a strategy for a new task by aggregating similar past
         experiences. Returns None if there's nothing relevant to go on.
 
-        Confidence is the Wilson lower bound of the success rate for the
-        recommended action — so an action that worked 9/10 times outranks one
-        that worked 1/1 time (small samples are penalised, as they should be).
+        Confidence is the Wilson lower bound of each action's success rate, so a
+        9/10 action outranks a lucky 1/1. Counts cover all matches, not a sample.
         """
-        candidates = self._storage.search(task, k=k)
+        candidates = self._storage.search(task, k=None)
         if not candidates:
             return None
 

@@ -77,6 +77,18 @@ def test_recommend_prefers_more_proven_action(memory):
     assert 0.0 < rec.confidence <= 1.0
 
 
+def test_recommend_counts_full_population_not_a_sample(memory):
+    # Regression: counts used to cap at k=20; must reflect the real total.
+    for _ in range(30):
+        memory.record("auth is slow", "Redis caching", outcome="success")
+
+    rec = memory.recommend("auth is slow")
+
+    assert rec is not None
+    assert rec.success_count == 30
+    assert rec.based_on == 30
+
+
 def test_recommend_returns_none_without_data(memory):
     assert memory.recommend("anything at all") is None
 

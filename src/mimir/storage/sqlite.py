@@ -148,7 +148,7 @@ class SQLiteStorage(Storage):
     def search(
         self,
         query: str,
-        k: int = 5,
+        k: int | None = 5,
         outcome: str | None = None,
         context: dict | None = None,
     ) -> list[tuple[Experience, float]]:
@@ -160,7 +160,7 @@ class SQLiteStorage(Storage):
             if context and not _context_matches(exp.context, context):
                 continue
             results.append((exp, score))
-            if len(results) >= k:
+            if k is not None and len(results) >= k:
                 break
         return results
 

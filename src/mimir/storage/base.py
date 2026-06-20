@@ -25,14 +25,14 @@ class Storage(ABC):
     def search(
         self,
         query: str,
-        k: int = 5,
+        k: int | None = 5,
         outcome: str | None = None,
         context: dict | None = None,
     ) -> list[tuple[Experience, float]]:
         """Return up to ``k`` (experience, relevance_score) pairs, best first.
 
         ``relevance_score`` is in [0, 1]. ``outcome`` and ``context`` are
-        optional equality filters applied before ranking.
+        optional equality filters. ``k=None`` returns all matches.
         """
 
     @abstractmethod
