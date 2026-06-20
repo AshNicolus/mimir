@@ -41,6 +41,11 @@ def test_recall_returns_nothing_for_unrelated_query(memory):
     assert memory.recall("how to bake sourdough bread") == []
 
 
+def test_search_with_zero_limit_returns_empty(memory):
+    memory.record("a task", "an action")
+    assert memory._storage.search("task", k=0) == []
+
+
 def test_record_failure_is_queryable_separately(memory):
     memory.record_failure(
         "Throttle abusive clients",

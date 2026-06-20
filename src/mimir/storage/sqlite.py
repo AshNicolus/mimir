@@ -155,13 +155,13 @@ class SQLiteStorage(Storage):
         scored = self._fts_search(query) if self._fts else self._fallback_search(query)
         results: list[tuple[Experience, float]] = []
         for exp, score in scored:
+            if k is not None and len(results) >= k:
+                break
             if outcome is not None and exp.outcome.value != outcome:
                 continue
             if context and not _context_matches(exp.context, context):
                 continue
             results.append((exp, score))
-            if k is not None and len(results) >= k:
-                break
         return results
 
     def _fts_search(self, query: str) -> list[tuple[Experience, float]]:
