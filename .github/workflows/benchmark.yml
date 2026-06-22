@@ -1,9 +1,14 @@
 name: Benchmark
 
-# Runs the same workload on this PR and on its base, on one runner, and posts
-# a comparison to the run summary. Informational: never fails the build.
+# Runs the same workload on this PR and on its base, on one runner, then posts
+# the comparison as a comment on the PR (and to the run summary).
+# Informational: never fails the build.
 on:
   pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   benchmark:
@@ -25,4 +30,12 @@ jobs:
           python /tmp/bench/run.py > /tmp/head.json
           git checkout -q ${{ github.event.pull_request.base.sha }}
           python /tmp/bench/run.py > /tmp/base.json
-          python /tmp/bench/compare.py /tmp/base.json /tmp/head.json | tee -a "$GITHUB_STEP_SUMMARY"
+          python /tmp/bench/compare.py /tmp/base.json /tmp/head.json > /tmp/bench.md
+          cat /tmp/bench.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on PR
+        # Forked PRs get a read-only token and can't comment, so skip them.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: benchmark
+          path: /tmp/bench.md
