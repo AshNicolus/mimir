@@ -174,7 +174,7 @@ print(memory.recommend("login times out under load"))
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | 🛠️ Basic (non-LLM aggregation) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | Future |
-| **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows | ✅ Python 3.10–3.12 |
+| **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows |  Python 3.10–3.12 |
 
 ## Scaling path
 
