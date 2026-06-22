@@ -223,6 +223,57 @@ def test_concurrent_writes_are_safe(memory):
     assert memory.count() == 100
 
 
+def hydration_count(memory, query, k):
+    """Count how many rows recall turns into Experience objects."""
+    storage = memory._storage
+    original = storage._row_to_experience
+    calls = 0
+
+    def counting(row):
+        nonlocal calls
+        calls += 1
+        return original(row)
+
+    storage._row_to_experience = counting
+    try:
+        memory.recall(query, k=k)
+    finally:
+        storage._row_to_experience = original
+    return calls
+
+
+def test_recall_does_not_scale_with_store_size():
+    # Recall must bound how many rows it hydrates, so latency stays flat as the
+    # store grows instead of going O(N) per call.
+    small, big = Mimir(":memory:"), Mimir(":memory:")
+    if not small._storage._fts:
+        small.close()
+        big.close()
+        pytest.skip("FTS5 not available; fallback search scans the full table")
+    try:
+        for i in range(100):
+            small.record(f"fix latency in service {i}", "add cache")
+        for i in range(2000):
+            big.record(f"fix latency in service {i}", "add cache")
+
+        assert hydration_count(small, "latency service", 5) == hydration_count(
+            big, "latency service", 5
+        )
+    finally:
+        small.close()
+        big.close()
+
+
+def test_recall_filter_by_nested_context(memory):
+    # Context values SQL can't compare must still filter correctly in Python.
+    memory.record("speed up api", "add cache", context={"tags": ["auth", "cache"]})
+    memory.record("speed up api", "add index", context={"tags": ["billing"]})
+
+    results = memory.recall("speed up api", context={"tags": ["auth", "cache"]})
+    assert len(results) == 1
+    assert results[0].action == "add cache"
+
+
 def test_context_manager_closes(tmp_path):
     db = str(tmp_path / "ctx.db")
     with Mimir(db_path=db) as m:

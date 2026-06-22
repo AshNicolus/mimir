@@ -21,6 +21,7 @@ from ..models import Experience, Outcome
 from .base import Storage
 
 _TOKEN = re.compile(r"[a-z0-9]+")
+_SIMPLE_KEY = re.compile(r"[A-Za-z0-9_]+")
 
 # Common function words that add retrieval noise without signal.
 _STOPWORDS = frozenset(
@@ -164,57 +165,89 @@ class SQLiteStorage(Storage):
         outcome: str | None = None,
         context: dict | None = None,
     ) -> list[tuple[Experience, float]]:
-        scored = self._fts_search(query) if self._fts else self._fallback_search(query)
-        results: list[tuple[Experience, float]] = []
-        for exp, score in scored:
-            if k is not None and len(results) >= k:
-                break
-            if outcome is not None and exp.outcome.value != outcome:
-                continue
-            if context and not context_matches(exp.context, context):
-                continue
-            results.append((exp, score))
-        return results
+        # Push the outcome and any scalar context filters into SQL so we don't
+        # hydrate the whole store on every recall. Only apply LIMIT when every
+        # filter was pushed down — otherwise a leftover Python-side context
+        # check could drop matches that the limit already cut off.
+        filters = context_sql_filters(context)
+        fully_pushed = not context or len(filters) == len(context)
+        limit = k if k is not None and fully_pushed else None
 
-    def _fts_search(self, query: str) -> list[tuple[Experience, float]]:
+        if self._fts:
+            scored = self._fts_search(query, outcome, filters, limit)
+        else:
+            scored = self._fallback_search(query, outcome, filters)
+
+        # Exact check for context values SQL can't compare (nested, missing).
+        if context:
+            scored = [(e, s) for e, s in scored if context_matches(e.context, context)]
+        return scored[:k] if k is not None else scored
+
+    def _fts_search(
+        self,
+        query: str,
+        outcome: str | None,
+        filters: list[tuple[str, object]],
+        limit: int | None,
+    ) -> list[tuple[Experience, float]]:
         terms = query_terms(query)
         if not terms:
             return []
         match = " OR ".join(f'"{t}"' for t in terms)
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT e.*, bm25(experiences_fts) AS rank "
-                "FROM experiences_fts "
-                "JOIN experiences e ON e.id = experiences_fts.id "
-                "WHERE experiences_fts MATCH ? "
-                "ORDER BY rank",  # bm25: lower is better
-                (match,),
-            ).fetchall()
-        out = []
-        for row in rows:
-            # bm25 is an unbounded negative-ish score; squash to (0, 1] for a stable API
-            rank = row["rank"]
-            score = 1.0 / (1.0 + max(rank, 0.0))
-            out.append((self._row_to_experience(row), score))
-        return out
 
-    def _fallback_search(self, query: str) -> list[tuple[Experience, float]]:
-        q = set(query_terms(query))
-        if not q:
-            return []
+        where = ["experiences_fts MATCH ?"]
+        params: list[object] = [match]
+        if outcome is not None:
+            where.append("e.outcome = ?")
+            params.append(outcome)
+        for path, value in filters:
+            where.append("json_extract(e.context, ?) = ?")
+            params += [path, value]
+
+        sql = (
+            "SELECT e.*, bm25(experiences_fts) AS rank "
+            "FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY rank"  # bm25: lower is better
+        )
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM experiences").fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
+        return [(self._row_to_experience(r), bm25_to_score(r["rank"])) for r in rows]
+
+    def _fallback_search(
+        self,
+        query: str,
+        outcome: str | None,
+        filters: list[tuple[str, object]],
+    ) -> list[tuple[Experience, float]]:
+        terms = set(query_terms(query))
+        if not terms:
+            return []
+
+        where = []
+        params: list[object] = []
+        if outcome is not None:
+            where.append("outcome = ?")
+            params.append(outcome)
+        for path, value in filters:
+            where.append("json_extract(context, ?) = ?")
+            params += [path, value]
+        sql = "SELECT * FROM experiences"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         scored = []
         for row in rows:
             exp = self._row_to_experience(row)
-            doc = set(tokenize(exp.text()))
-            if not doc:
-                continue
-            overlap = len(q & doc)
-            if overlap == 0:
-                continue
-            score = overlap / len(q)  # fraction of query terms matched
-            scored.append((exp, score))
+            overlap = len(terms & set(tokenize(exp.text())))
+            if overlap:
+                scored.append((exp, overlap / len(terms)))  # fraction of terms matched
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return scored
 
@@ -240,3 +273,24 @@ class SQLiteStorage(Storage):
 
 def context_matches(stored: dict, wanted: dict) -> bool:
     return all(stored.get(key) == value for key, value in wanted.items())
+
+
+def context_sql_filters(context: dict | None) -> list[tuple[str, object]]:
+    """Context entries we can safely push into SQL as json_extract equality.
+
+    Only plain keys and scalar values qualify; nested values, None, and keys
+    with awkward characters are left for context_matches to check in Python.
+    Returns (json_path, value) pairs.
+    """
+    if not context:
+        return []
+    filters = []
+    for key, value in context.items():
+        if isinstance(value, (str, int, float)) and _SIMPLE_KEY.fullmatch(key):
+            filters.append((f"$.{key}", value))
+    return filters
+
+
+def bm25_to_score(rank: float) -> float:
+    """Squash an unbounded, negative-ish bm25 rank into a stable (0, 1] score."""
+    return 1.0 / (1.0 + max(rank, 0.0))
