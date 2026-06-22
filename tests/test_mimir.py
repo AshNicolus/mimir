@@ -264,6 +264,36 @@ def test_recall_does_not_scale_with_store_size():
         big.close()
 
 
+def index_names(memory):
+    rows = memory._storage._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'index'"
+    ).fetchall()
+    return {row["name"] for row in rows}
+
+
+def test_outcome_index_is_not_created(memory):
+    # The outcome index is never used for reads (FTS recall joins by primary key
+    # and filters outcome as a residual), so it must not exist.
+    assert "idx_experiences_outcome" not in index_names(memory)
+
+
+def test_outcome_index_is_dropped_on_reopen(tmp_path):
+    # A database created before this change should shed the stale index too.
+    db = str(tmp_path / "mimir.db")
+    seed = Mimir(db_path=db)
+    seed._storage._conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome)"
+    )
+    seed._storage._conn.commit()
+    seed.close()
+
+    reopened = Mimir(db_path=db)
+    try:
+        assert "idx_experiences_outcome" not in index_names(reopened)
+    finally:
+        reopened.close()
+
+
 def test_recall_filter_by_nested_context(memory):
     # Context values SQL can't compare must still filter correctly in Python.
     memory.record("speed up api", "add cache", context={"tags": ["auth", "cache"]})
