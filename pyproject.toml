@@ -8,13 +8,14 @@ version = "0.1.1"
 description = "Experience-driven memory for autonomous agents: learn from past successes and failures."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [{ name = "AshNicolus" }]
 keywords = ["agents", "memory", "llm", "experience", "learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -40,4 +41,4 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"

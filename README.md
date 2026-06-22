@@ -135,7 +135,7 @@ cd mimir
 pip install -e ".[dev]"
 ```
 
-**Requirements:** Python 3.11+. v1 has no required external services: storage is a local SQLite file. Semantic search and reflection are optional extras.
+**Requirements:** Python 3.10+, tested on 3.10, 3.11, and 3.12 (Linux, macOS, Windows). This matters for agents, which often run on the Python version their host ships, and 3.10 is still the default on several current Linux distributions. v1 has no required external services: storage is a local SQLite file. Semantic search and reflection are optional extras.
 
 ## Quick start
 
@@ -174,6 +174,7 @@ print(memory.recommend("login times out under load"))
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | 🛠️ Basic (non-LLM aggregation) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | Future |
+| **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows | ✅ Python 3.10–3.12 |
 
 ## Scaling path
 
