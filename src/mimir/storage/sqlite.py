@@ -75,9 +75,11 @@ class SQLiteStorage(Storage):
                 )
                 """
             )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome)"
-            )
+            # No index on outcome: the default FTS recall selects rows via the
+            # match and joins by primary key, so outcome is only a residual
+            # filter the planner never indexes. The index just added write cost.
+            # Drop it so databases created before this change shed it too.
+            self._conn.execute("DROP INDEX IF EXISTS idx_experiences_outcome")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_experiences_created ON experiences(created_at)"
             )
