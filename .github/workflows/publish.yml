@@ -1,8 +1,10 @@
-name: Publish to PyPI
+name: Build & Publish
 
-# Publishes when you create a GitHub Release. Uses PyPI Trusted Publishing
-# (OIDC) — no API tokens are stored anywhere.
+# On every pull request this builds the package and runs the tests as a merge
+# gate. When a GitHub Release is published it also pushes to PyPI using Trusted
+# Publishing (OIDC), so no API tokens are stored anywhere.
 on:
+  pull_request:
   release:
     types: [published]
 
@@ -32,6 +34,7 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
