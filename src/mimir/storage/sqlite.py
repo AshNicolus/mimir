@@ -21,23 +21,23 @@ from ..clustering import ActionClusterer, Cluster, ExactClusterer, normalize_act
 from ..models import Experience, Outcome
 from .base import ActionStat, Storage
 
-_TOKEN = re.compile(r"[a-z0-9]+")
-_SIMPLE_KEY = re.compile(r"[A-Za-z0-9_]+")
+TOKEN = re.compile(r"[a-z0-9]+")
+SIMPLE_KEY = re.compile(r"[A-Za-z0-9_]+")
 
 # Common function words that add retrieval noise without signal.
-_STOPWORDS = frozenset(
+STOPWORDS = frozenset(
     "a an the is are was were be been to of in on for and or it this that with "
     "as at by from how what i my we".split()
 )
 
 
 def tokenize(text: str) -> list[str]:
-    return _TOKEN.findall(text.lower())
+    return TOKEN.findall(text.lower())
 
 
 def query_terms(query: str) -> list[str]:
     terms = tokenize(query)
-    meaningful = [t for t in terms if t not in _STOPWORDS]
+    meaningful = [t for t in terms if t not in STOPWORDS]
     return meaningful or terms  # fall back if the query is all stopwords
 
 
@@ -54,9 +54,9 @@ class SQLiteStorage(Storage):
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._fts = self._init_schema()
+        self._fts = self.init_schema()
 
-    def _init_schema(self) -> bool:
+    def init_schema(self) -> bool:
         with self._lock:
             # WAL improves read/write concurrency and durability; NORMAL sync is
             # the standard safe-and-fast pairing with WAL.
@@ -155,7 +155,7 @@ class SQLiteStorage(Storage):
             row = self._conn.execute(
                 "SELECT * FROM experiences WHERE id = ?", (experience_id,)
             ).fetchone()
-        return self._row_to_experience(row) if row else None
+        return self.row_to_experience(row) if row else None
 
     def recent(self, n: int = 10) -> list[Experience]:
         with self._lock:
@@ -165,7 +165,7 @@ class SQLiteStorage(Storage):
                 "SELECT * FROM experiences ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (n,),
             ).fetchall()
-        return [self._row_to_experience(r) for r in rows]
+        return [self.row_to_experience(r) for r in rows]
 
     def count(self) -> int:
         with self._lock:
@@ -315,16 +315,16 @@ class SQLiteStorage(Storage):
         limit = k if k is not None and fully_pushed else None
 
         if self._fts:
-            scored = self._fts_search(query, outcome, filters, limit)
+            scored = self.fts_search(query, outcome, filters, limit)
         else:
-            scored = self._fallback_search(query, outcome, filters)
+            scored = self.fallback_search(query, outcome, filters)
 
         # Exact check for context values SQL can't compare (nested, missing).
         if context:
             scored = [(e, s) for e, s in scored if context_matches(e.context, context)]
         return scored[:k] if k is not None else scored
 
-    def _fts_search(
+    def fts_search(
         self,
         query: str,
         outcome: str | None,
@@ -357,9 +357,9 @@ class SQLiteStorage(Storage):
 
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
-        return [(self._row_to_experience(r), bm25_to_score(r["rank"])) for r in rows]
+        return [(self.row_to_experience(r), bm25_to_score(r["rank"])) for r in rows]
 
-    def _fallback_search(
+    def fallback_search(
         self,
         query: str,
         outcome: str | None,
@@ -385,14 +385,14 @@ class SQLiteStorage(Storage):
             rows = self._conn.execute(sql, params).fetchall()
         scored = []
         for row in rows:
-            exp = self._row_to_experience(row)
+            exp = self.row_to_experience(row)
             overlap = len(terms & set(tokenize(exp.text())))
             if overlap:
                 scored.append((exp, overlap / len(terms)))  # fraction of terms matched
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return scored
 
-    def _row_to_experience(self, row: sqlite3.Row) -> Experience:
+    def row_to_experience(self, row: sqlite3.Row) -> Experience:
         return Experience(
             id=row["id"],
             task=row["task"],
@@ -425,7 +425,7 @@ def context_sql_filters(context: dict | None) -> list[tuple[str, object]]:
         return []
     filters = []
     for key, value in context.items():
-        if isinstance(value, (str, int, float)) and _SIMPLE_KEY.fullmatch(key):
+        if isinstance(value, (str, int, float)) and SIMPLE_KEY.fullmatch(key):
             filters.append((f"$.{key}", value))
     return filters
 

@@ -47,7 +47,7 @@ class Experience(BaseModel):
 
     @field_validator("task", "action")
     @classmethod
-    def _not_blank(cls, value: str) -> str:
+    def not_blank(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("must not be empty or whitespace")

@@ -344,9 +344,9 @@ def test_rerecording_same_id_does_not_duplicate_in_search(memory):
     # Re-saving an edited experience under the same id must not leave a stale
     # FTS row (the bug the FTS dedup fix addresses).
     exp = Experience(task="fix login latency", action="first attempt")
-    memory._write(exp)
+    memory.write(exp)
     exp.action = "second attempt"
-    memory._write(exp)
+    memory.write(exp)
 
     results = memory.recall("login latency", k=10)
     assert len(results) == 1
@@ -396,7 +396,7 @@ def test_concurrent_writes_are_safe(memory):
 def hydration_count(memory, query, k):
     """Count how many rows recall turns into Experience objects."""
     storage = memory._storage
-    original = storage._row_to_experience
+    original = storage.row_to_experience
     calls = 0
 
     def counting(row):
@@ -404,11 +404,11 @@ def hydration_count(memory, query, k):
         calls += 1
         return original(row)
 
-    storage._row_to_experience = counting
+    storage.row_to_experience = counting
     try:
         memory.recall(query, k=k)
     finally:
-        storage._row_to_experience = original
+        storage.row_to_experience = original
     return calls
 
 

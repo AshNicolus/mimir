@@ -1,7 +1,7 @@
 """The Mimir public API.
 
 Everything users touch goes through this class. All writes funnel through a
-single chokepoint (`_write`) — that one method is the seam where validation,
+single chokepoint (`write`) — that one method is the seam where validation,
 provenance tagging, and (future) a memory-firewall layer plug in without
 touching the rest of the system.
 """
@@ -52,7 +52,7 @@ class Mimir:
             score=score,
             context=context or {},
         )
-        return self._write(exp)
+        return self.write(exp)
 
     def record_failure(
         self,
@@ -69,7 +69,7 @@ class Mimir:
             ctx["failure_reason"] = reason
         return self.record(task, action, outcome=Outcome.FAILURE, score=score, context=ctx)
 
-    def _write(self, exp: Experience) -> Experience:
+    def write(self, exp: Experience) -> Experience:
         """The single write chokepoint. Validation/provenance/firewall hooks go here."""
         # Fail fast with a clear message rather than crashing deep in storage.
         try:
@@ -96,7 +96,7 @@ class Mimir:
             query, k=max(k * 4, k), outcome=outcome_val, context=context
         )
         if self._embedder.enabled:
-            candidates = self._rerank(query, candidates)
+            candidates = self.rerank(query, candidates)
         return [exp for exp, _ in candidates[:k]]
 
     def get(self, experience_id: str) -> Experience | None:
@@ -155,7 +155,7 @@ class Mimir:
             supporting_ids=self._storage.supporting_ids(task, best_stat.key),
         )
 
-    def _rerank(
+    def rerank(
         self, query: str, candidates: list[tuple[Experience, float]]
     ) -> list[tuple[Experience, float]]:
         qvec = self._embedder.embed(query)
