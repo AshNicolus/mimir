@@ -13,7 +13,7 @@ import math
 import threading
 
 from .clustering import ActionClusterer
-from .embeddings import Embedder, NullEmbedder, cosine_similarity
+from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, Recommendation
 from .storage import SQLiteStorage, Storage
 
@@ -89,15 +89,22 @@ class Mimir:
         outcome: str | Outcome | None = None,
         context: dict | None = None,
     ) -> list[Experience]:
-        """Return the most relevant past experiences for ``query``."""
+        """Return the most relevant past experiences for ``query``.
+
+        With an embedder configured, recall is hybrid: keyword and vector
+        candidates are fused, so an experience can be found by meaning even with
+        no shared words. Without one, it is plain keyword search.
+        """
         outcome_val = outcome.value if isinstance(outcome, Outcome) else outcome
-        # Pull a wider candidate set so optional embedding rerank has room to work.
-        candidates = self._storage.search(
-            query, k=max(k * 4, k), outcome=outcome_val, context=context
+        width = max(k * 4, k)
+        keyword = self._storage.search(query, k=width, outcome=outcome_val, context=context)
+        if not self._embedder.enabled:
+            return [exp for exp, _ in keyword[:k]]
+        vector = self._storage.vector_search(
+            self._embedder.embed(query), k=width, outcome=outcome_val, context=context
         )
-        if self._embedder.enabled:
-            candidates = self.rerank(query, candidates)
-        return [exp for exp, _ in candidates[:k]]
+        fused = reciprocal_rank_fusion(keyword, vector)
+        return [exp for exp, _ in fused[:k]]
 
     def get(self, experience_id: str) -> Experience | None:
         """Fetch a single experience by id, or None if it doesn't exist."""
@@ -155,18 +162,6 @@ class Mimir:
             supporting_ids=self._storage.supporting_ids(task, best_stat.key),
         )
 
-    def rerank(
-        self, query: str, candidates: list[tuple[Experience, float]]
-    ) -> list[tuple[Experience, float]]:
-        qvec = self._embedder.embed(query)
-        rescored = []
-        for exp, kw_score in candidates:
-            sem = cosine_similarity(qvec, exp.embedding) if exp.embedding else 0.0
-            # Blend keyword and semantic relevance.
-            rescored.append((exp, 0.5 * kw_score + 0.5 * sem))
-        rescored.sort(key=lambda pair: pair[1], reverse=True)
-        return rescored
-
     def count(self) -> int:
         return self._storage.count()
 
@@ -182,6 +177,24 @@ class Mimir:
 
 def default_score(outcome: Outcome) -> float:
     return {Outcome.SUCCESS: 1.0, Outcome.PARTIAL: 0.5, Outcome.FAILURE: 0.0}[outcome]
+
+
+def reciprocal_rank_fusion(
+    *rankings: list[tuple[Experience, float]], c: int = 60
+) -> list[tuple[Experience, float]]:
+    """Merge ranked candidate lists into one, scoring each item by the sum of
+    1 / (c + rank) across the lists it appears in. Rank-based, so it fuses the
+    keyword and vector lists without their incompatible score scales fighting.
+    """
+    scores: dict[str, float] = {}
+    experiences: dict[str, Experience] = {}
+    for ranking in rankings:
+        for rank, (exp, _) in enumerate(ranking):
+            scores[exp.id] = scores.get(exp.id, 0.0) + 1.0 / (c + rank)
+            experiences[exp.id] = exp
+    fused = [(experiences[exp_id], score) for exp_id, score in scores.items()]
+    fused.sort(key=lambda pair: pair[1], reverse=True)
+    return fused
 
 
 def wilson_lower_bound(successes: float, total: float, z: float = 1.96) -> float:

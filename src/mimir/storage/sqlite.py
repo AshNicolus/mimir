@@ -18,6 +18,7 @@ import threading
 from datetime import datetime
 
 from ..clustering import ActionClusterer, Cluster, ExactClusterer, normalize_action
+from ..embeddings import cosine_similarity
 from ..models import Experience, Outcome
 from .base import ActionStat, Storage
 
@@ -298,6 +299,41 @@ class SQLiteStorage(Storage):
                 if len(ids) >= limit:
                     break
         return ids
+
+    def vector_search(
+        self,
+        embedding: list[float],
+        k: int | None = 5,
+        outcome: str | None = None,
+        context: dict | None = None,
+    ) -> list[tuple[Experience, float]]:
+        if not embedding:
+            return []
+        # Scan embedded rows and rank by cosine in Python. This is O(N) and the
+        # dependency-free fallback; a vector-index backend overrides the method.
+        filters = context_sql_filters(context)
+        where = ["embedding IS NOT NULL"]
+        params: list[object] = []
+        if outcome is not None:
+            where.append("outcome = ?")
+            params.append(outcome)
+        for path, value in filters:
+            where.append("json_extract(context, ?) = ?")
+            params += [path, value]
+        sql = "SELECT * FROM experiences WHERE " + " AND ".join(where)
+
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        scored = []
+        for row in rows:
+            exp = self.row_to_experience(row)
+            if context and not context_matches(exp.context, context):
+                continue
+            sim = cosine_similarity(embedding, exp.embedding) if exp.embedding else 0.0
+            if sim > 0:
+                scored.append((exp, sim))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored[:k] if k is not None else scored
 
     def search(
         self,

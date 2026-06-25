@@ -60,6 +60,22 @@ class Storage(ABC):
         """
 
     @abstractmethod
+    def vector_search(
+        self,
+        embedding: list[float],
+        k: int | None = 5,
+        outcome: str | None = None,
+        context: dict | None = None,
+    ) -> list[tuple[Experience, float]]:
+        """Return up to ``k`` (experience, similarity) pairs by vector similarity
+        to ``embedding``, best first, over experiences that have an embedding.
+
+        This is the vector half of hybrid recall. The SQLite backend computes
+        cosine in Python (no dependency); a real vector-index backend overrides
+        this method. ``outcome`` and ``context`` filter as in ``search``.
+        """
+
+    @abstractmethod
     def aggregate_actions(self, query: str) -> list[ActionStat]:
         """Group all experiences matching ``query`` by normalized action and
         return outcome counts per action, so recommend() can rank without
