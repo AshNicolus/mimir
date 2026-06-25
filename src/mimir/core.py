@@ -114,24 +114,27 @@ class Mimir:
         Confidence is the Wilson lower bound of each action's success rate, so a
         9/10 action outranks a lucky 1/1. Counts cover all matches, not a sample.
         """
-        best: Recommendation | None = None
+        best_stat = None
+        best_confidence = -1.0
         for stat in self._storage.aggregate_actions(task):
             effective_successes = stat.success + 0.5 * stat.partial
             if effective_successes == 0:
                 continue  # never recommend an action with no wins
-            rec = Recommendation(
-                task=task,
-                recommended_action=stat.action,
-                confidence=wilson_lower_bound(effective_successes, stat.total),
-                success_count=stat.success,
-                failure_count=stat.failure,
-                partial_count=stat.partial,
-                based_on=stat.total,
-                supporting_ids=stat.supporting_ids,
-            )
-            if best is None or rec.confidence > best.confidence:
-                best = rec
-        return best
+            confidence = wilson_lower_bound(effective_successes, stat.total)
+            if confidence > best_confidence:
+                best_confidence, best_stat = confidence, stat
+        if best_stat is None:
+            return None
+        return Recommendation(
+            task=task,
+            recommended_action=best_stat.action,
+            confidence=best_confidence,
+            success_count=best_stat.success,
+            failure_count=best_stat.failure,
+            partial_count=best_stat.partial,
+            based_on=best_stat.total,
+            supporting_ids=self._storage.supporting_ids(task, best_stat.key),
+        )
 
     def _rerank(
         self, query: str, candidates: list[tuple[Experience, float]]

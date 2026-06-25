@@ -106,6 +106,19 @@ def test_recommend_returns_none_without_data(memory):
     assert memory.recommend("anything at all") is None
 
 
+def test_recommend_caps_supporting_ids(memory):
+    # supporting_ids is a bounded sample, even when many experiences match,
+    # while the counts stay exact over the whole population.
+    for _ in range(250):
+        memory.record("auth is slow", "Redis caching", outcome="success")
+
+    rec = memory.recommend("auth is slow")
+    assert rec is not None
+    assert rec.based_on == 250
+    assert rec.success_count == 250
+    assert 0 < len(rec.supporting_ids) <= 100
+
+
 def test_recommend_works_on_database_without_action_norm(tmp_path):
     # A database written before the action_norm column existed must be migrated
     # and backfilled on open so recommend() still groups correctly.
