@@ -21,11 +21,11 @@ class ActionStat(NamedTuple):
     """
 
     action: str  # a representative phrasing of the action
+    key: str  # normalized action, the group key
     success: int
     failure: int
     partial: int
     total: int
-    supporting_ids: list[str]
 
 
 class Storage(ABC):
@@ -56,6 +56,11 @@ class Storage(ABC):
         """Group all experiences matching ``query`` by normalized action and
         return outcome counts per action, so recommend() can rank without
         hydrating every matching row."""
+
+    @abstractmethod
+    def supporting_ids(self, query: str, action_key: str, limit: int = 100) -> list[str]:
+        """Return up to ``limit`` ids of experiences matching ``query`` whose
+        normalized action equals ``action_key``."""
 
     @abstractmethod
     def delete(self, experience_id: str) -> bool:

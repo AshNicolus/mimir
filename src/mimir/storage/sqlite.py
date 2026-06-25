@@ -178,12 +178,11 @@ class SQLiteStorage(Storage):
             match = " OR ".join(f'"{t}"' for t in terms)
             with self._lock:
                 rows = self._conn.execute(
-                    "SELECT MIN(e.action) AS action, "
+                    "SELECT e.action_norm AS key, MIN(e.action) AS action, "
                     "SUM(e.outcome = 'success') AS success, "
                     "SUM(e.outcome = 'failure') AS failure, "
                     "SUM(e.outcome = 'partial') AS partial, "
-                    "COUNT(*) AS total, "
-                    "group_concat(e.id) AS ids "
+                    "COUNT(*) AS total "
                     "FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
                     "WHERE experiences_fts MATCH ? "
                     "GROUP BY e.action_norm",
@@ -192,11 +191,11 @@ class SQLiteStorage(Storage):
             return [
                 ActionStat(
                     action=row["action"],
+                    key=row["key"],
                     success=row["success"],
                     failure=row["failure"],
                     partial=row["partial"],
                     total=row["total"],
-                    supporting_ids=row["ids"].split(","),
                 )
                 for row in rows
             ]
@@ -204,29 +203,58 @@ class SQLiteStorage(Storage):
         # No FTS5: group in Python over the lightweight columns.
         wanted = set(terms)
         with self._lock:
-            rows = self._conn.execute("SELECT id, task, action, outcome FROM experiences").fetchall()
+            rows = self._conn.execute("SELECT task, action, outcome FROM experiences").fetchall()
         groups: dict[str, dict] = {}
         for row in rows:
             if not wanted & set(tokenize(f"{row['task']}\n{row['action']}")):
                 continue
+            key = normalize_action(row["action"])
             group = groups.setdefault(
-                normalize_action(row["action"]),
-                {"action": row["action"], "success": 0, "failure": 0, "partial": 0, "ids": []},
+                key,
+                {"action": row["action"], "success": 0, "failure": 0, "partial": 0},
             )
             group[row["outcome"]] += 1
-            group["ids"].append(row["id"])
             group["action"] = min(group["action"], row["action"])  # stable representative
         return [
             ActionStat(
                 action=g["action"],
+                key=key,
                 success=g["success"],
                 failure=g["failure"],
                 partial=g["partial"],
                 total=g["success"] + g["failure"] + g["partial"],
-                supporting_ids=g["ids"],
             )
-            for g in groups.values()
+            for key, g in groups.items()
         ]
+
+    def supporting_ids(self, query: str, action_key: str, limit: int = 100) -> list[str]:
+        terms = query_terms(query)
+        if not terms:
+            return []
+        if self._fts:
+            match = " OR ".join(f'"{t}"' for t in terms)
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT e.id FROM experiences_fts JOIN experiences e "
+                    "ON e.id = experiences_fts.id "
+                    "WHERE experiences_fts MATCH ? AND e.action_norm = ? LIMIT ?",
+                    (match, action_key, limit),
+                ).fetchall()
+            return [row["id"] for row in rows]
+
+        wanted = set(terms)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, task, action, action_norm FROM experiences WHERE action_norm = ?",
+                (action_key,),
+            ).fetchall()
+        ids = []
+        for row in rows:
+            if wanted & set(tokenize(f"{row['task']}\n{row['action']}")):
+                ids.append(row["id"])
+                if len(ids) >= limit:
+                    break
+        return ids
 
     def search(
         self,
