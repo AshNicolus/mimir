@@ -12,6 +12,7 @@ import json
 import math
 import threading
 
+from .clustering import ActionClusterer
 from .embeddings import Embedder, NullEmbedder, cosine_similarity
 from .models import Experience, Outcome, Recommendation
 from .storage import SQLiteStorage, Storage
@@ -24,9 +25,10 @@ class Mimir:
         *,
         storage: Storage | None = None,
         embedder: Embedder | None = None,
+        clusterer: ActionClusterer | None = None,
         weight_by_relevance: bool = True,
     ) -> None:
-        self._storage = storage or SQLiteStorage(db_path)
+        self._storage = storage or SQLiteStorage(db_path, clusterer=clusterer)
         self._embedder = embedder or NullEmbedder()
         self._lock = threading.Lock()
         self._weight_by_relevance = weight_by_relevance

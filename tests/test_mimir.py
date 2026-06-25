@@ -145,6 +145,67 @@ def test_relevance_weighting_is_ablatable(memory):
     assert on.confidence != off.confidence
 
 
+def test_default_clusterer_keeps_phrasings_separate(memory):
+    # The cheap default clusters by exact text, so differently worded phrasings
+    # of the same strategy do not merge.
+    memory.record("auth is slow", "Added Redis cache", outcome="success")
+    memory.record("auth is slow", "use redis caching", outcome="success")
+
+    rec = memory.recommend("auth is slow")
+    assert rec is not None
+    assert rec.based_on == 1
+
+
+def test_custom_clusterer_merges_equivalent_actions():
+    # A swappable clusterer collapses semantically equivalent but textually
+    # different actions into one recommendation with summed counts.
+    from mimir.clustering import ActionClusterer, normalize_action
+
+    class RedisClusterer(ActionClusterer):
+        def key(self, action, known):
+            return "redis" if "redis" in action.lower() else normalize_action(action)
+
+    m = Mimir(":memory:", clusterer=RedisClusterer())
+    try:
+        m.record("auth is slow", "Added Redis cache", outcome="success")
+        m.record("auth is slow", "use redis caching", outcome="success")
+        m.record("auth is slow", "add a redis layer", outcome="failure")
+
+        rec = m.recommend("auth is slow")
+        assert rec is not None
+        assert rec.based_on == 3
+        assert rec.success_count == 2
+        assert rec.failure_count == 1
+    finally:
+        m.close()
+
+
+def test_embedding_clusterer_merges_similar_actions():
+    # The shipped embedding backend merges actions whose vectors are close and
+    # keeps unrelated ones apart.
+    from mimir.clustering import EmbeddingClusterer
+    from mimir.embeddings import Embedder
+
+    class FakeEmbedder(Embedder):
+        def embed(self, text):
+            t = text.lower()
+            return [1.0, 0.0] if ("redis" in t or "cache" in t or "caching" in t) else [0.0, 1.0]
+
+    m = Mimir(":memory:", clusterer=EmbeddingClusterer(FakeEmbedder(), threshold=0.9))
+    try:
+        m.record("auth is slow", "Added Redis cache", outcome="success")
+        m.record("auth is slow", "use redis caching", outcome="success")
+        m.record("auth is slow", "rewrite in rust", outcome="success")
+
+        stats = m._storage.aggregate_actions("auth is slow")
+        keys = {s.key for s in stats}
+        assert len(keys) == 2  # the two redis phrasings collapsed into one cluster
+        redis = max(stats, key=lambda s: s.total)
+        assert redis.total == 2
+    finally:
+        m.close()
+
+
 def test_recommend_works_on_database_without_action_norm(tmp_path):
     # A database written before the action_norm column existed must be migrated
     # and backfilled on open so recommend() still groups correctly.

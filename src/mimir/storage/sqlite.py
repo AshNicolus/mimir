@@ -17,6 +17,7 @@ import sqlite3
 import threading
 from datetime import datetime
 
+from ..clustering import ActionClusterer, Cluster, ExactClusterer, normalize_action
 from ..models import Experience, Outcome
 from .base import ActionStat, Storage
 
@@ -40,16 +41,14 @@ def query_terms(query: str) -> list[str]:
     return meaningful or terms  # fall back if the query is all stopwords
 
 
-def normalize_action(action: str) -> str:
-    """Collapse case and whitespace so phrasings of the same action group together."""
-    return " ".join(action.lower().split())
-
-
 class SQLiteStorage(Storage):
-    def __init__(self, db_path: str = ":memory:") -> None:
+    def __init__(
+        self, db_path: str = ":memory:", *, clusterer: ActionClusterer | None = None
+    ) -> None:
         if db_path not in (":memory:", "") and not db_path.startswith("file:"):
             parent = os.path.dirname(os.path.abspath(db_path))
             os.makedirs(parent, exist_ok=True)
+        self._clusterer = clusterer or ExactClusterer()
         # check_same_thread=False + an explicit lock lets the store be shared
         # across threads safely.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -105,8 +104,16 @@ class SQLiteStorage(Storage):
             self._conn.commit()
             return fts_ok
 
+    def known_clusters(self) -> list[Cluster]:
+        # Representative phrasing per cluster, for a clusterer to merge against.
+        rows = self._conn.execute(
+            "SELECT action_norm AS key, MIN(action) AS action FROM experiences GROUP BY action_norm"
+        ).fetchall()
+        return [Cluster(key=r["key"], action=r["action"]) for r in rows]
+
     def add(self, exp: Experience) -> None:
         with self._lock:
+            action_norm = self._clusterer.key(exp.action, self.known_clusters)
             self._conn.execute(
                 "INSERT OR REPLACE INTO experiences "
                 "(id, task, action, action_norm, outcome, score, context, embedding, "
@@ -115,7 +122,7 @@ class SQLiteStorage(Storage):
                     exp.id,
                     exp.task,
                     exp.action,
-                    normalize_action(exp.action),
+                    action_norm,
                     exp.outcome.value,
                     exp.score,
                     json.dumps(exp.context),
@@ -221,14 +228,16 @@ class SQLiteStorage(Storage):
         # the fraction of query terms a row matches, same as fallback search.
         wanted = set(terms)
         with self._lock:
-            rows = self._conn.execute("SELECT task, action, outcome FROM experiences").fetchall()
+            rows = self._conn.execute(
+                "SELECT task, action, action_norm, outcome FROM experiences"
+            ).fetchall()
         groups: dict[str, dict] = {}
         for row in rows:
             matched = wanted & set(tokenize(f"{row['task']}\n{row['action']}"))
             if not matched:
                 continue
             weight = len(matched) / len(wanted)
-            key = normalize_action(row["action"])
+            key = row["action_norm"]  # the stored cluster key
             group = groups.setdefault(
                 key,
                 {

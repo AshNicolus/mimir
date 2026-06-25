@@ -2,6 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from .clustering import ActionClusterer, EmbeddingClusterer, ExactClusterer
 from .core import Mimir
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, Recommendation
@@ -21,4 +22,7 @@ __all__ = [
     "SQLiteStorage",
     "Embedder",
     "NullEmbedder",
+    "ActionClusterer",
+    "ExactClusterer",
+    "EmbeddingClusterer",
 ]
