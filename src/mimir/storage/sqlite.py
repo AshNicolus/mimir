@@ -137,13 +137,9 @@ class SQLiteStorage(Storage):
 
     def delete(self, experience_id: str) -> bool:
         with self._lock:
-            cur = self._conn.execute(
-                "DELETE FROM experiences WHERE id = ?", (experience_id,)
-            )
+            cur = self._conn.execute("DELETE FROM experiences WHERE id = ?", (experience_id,))
             if self._fts:
-                self._conn.execute(
-                    "DELETE FROM experiences_fts WHERE id = ?", (experience_id,)
-                )
+                self._conn.execute("DELETE FROM experiences_fts WHERE id = ?", (experience_id,))
             self._conn.commit()
             return cur.rowcount > 0
 
@@ -174,18 +170,36 @@ class SQLiteStorage(Storage):
             return []
 
         if self._fts:
-            # Group and count in SQL: one row per action, not one per row.
+            # Group and count in SQL: one row per action, not one per row. The
+            # inner query scores each match with bm25 so the outer query can sum
+            # relevance per action alongside the raw counts.
             match = " OR ".join(f'"{t}"' for t in terms)
             with self._lock:
                 rows = self._conn.execute(
-                    "SELECT e.action_norm AS key, MIN(e.action) AS action, "
-                    "SUM(e.outcome = 'success') AS success, "
-                    "SUM(e.outcome = 'failure') AS failure, "
-                    "SUM(e.outcome = 'partial') AS partial, "
-                    "COUNT(*) AS total "
-                    "FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
-                    "WHERE experiences_fts MATCH ? "
-                    "GROUP BY e.action_norm",
+                    "SELECT key, MIN(action) AS action, "
+                    "SUM(outcome = 'success') AS success, "
+                    "SUM(outcome = 'failure') AS failure, "
+                    "SUM(outcome = 'partial') AS partial, "
+                    "COUNT(*) AS total, "
+                    "SUM(weight * (outcome = 'success')) AS weighted_success, "
+                    "SUM(weight * (outcome = 'partial')) AS weighted_partial, "
+                    "SUM(weight) AS weighted_total "
+                    "FROM ("
+                    # bm25 is negative and more relevant the lower it goes, so
+                    # s = -bm25 is the relevance magnitude. s/(1+s) squashes it
+                    # into [0, 1) monotonically, staying sensitive at the strong
+                    # end where the simpler 1/(1+rank) clamp would flatten to 1.
+                    "  SELECT key, action, outcome, s / (1.0 + s) AS weight FROM ("
+                    "    SELECT e.action_norm AS key, e.action AS action, e.outcome AS outcome, "
+                    "    max(-bm25(experiences_fts), 0.0) AS s "
+                    "    FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
+                    "    WHERE experiences_fts MATCH ? "
+                    # LIMIT keeps SQLite from flattening this into the outer
+                    # aggregate, where bm25() is not allowed to run.
+                    "    LIMIT -1"
+                    "  )"
+                    ") "
+                    "GROUP BY key",
                     (match,),
                 ).fetchall()
             return [
@@ -196,24 +210,41 @@ class SQLiteStorage(Storage):
                     failure=row["failure"],
                     partial=row["partial"],
                     total=row["total"],
+                    weighted_success=row["weighted_success"],
+                    weighted_partial=row["weighted_partial"],
+                    weighted_total=row["weighted_total"],
                 )
                 for row in rows
             ]
 
-        # No FTS5: group in Python over the lightweight columns.
+        # No FTS5: group in Python over the lightweight columns. Relevance is
+        # the fraction of query terms a row matches, same as fallback search.
         wanted = set(terms)
         with self._lock:
             rows = self._conn.execute("SELECT task, action, outcome FROM experiences").fetchall()
         groups: dict[str, dict] = {}
         for row in rows:
-            if not wanted & set(tokenize(f"{row['task']}\n{row['action']}")):
+            matched = wanted & set(tokenize(f"{row['task']}\n{row['action']}"))
+            if not matched:
                 continue
+            weight = len(matched) / len(wanted)
             key = normalize_action(row["action"])
             group = groups.setdefault(
                 key,
-                {"action": row["action"], "success": 0, "failure": 0, "partial": 0},
+                {
+                    "action": row["action"],
+                    "success": 0,
+                    "failure": 0,
+                    "partial": 0,
+                    "weighted_success": 0.0,
+                    "weighted_partial": 0.0,
+                    "weighted_total": 0.0,
+                },
             )
             group[row["outcome"]] += 1
+            group["weighted_total"] += weight
+            if row["outcome"] in ("success", "partial"):
+                group[f"weighted_{row['outcome']}"] += weight
             group["action"] = min(group["action"], row["action"])  # stable representative
         return [
             ActionStat(
@@ -223,6 +254,9 @@ class SQLiteStorage(Storage):
                 failure=g["failure"],
                 partial=g["partial"],
                 total=g["success"] + g["failure"] + g["partial"],
+                weighted_success=g["weighted_success"],
+                weighted_partial=g["weighted_partial"],
+                weighted_total=g["weighted_total"],
             )
             for key, g in groups.items()
         ]

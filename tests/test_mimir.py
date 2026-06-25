@@ -119,6 +119,32 @@ def test_recommend_caps_supporting_ids(memory):
     assert 0 < len(rec.supporting_ids) <= 100
 
 
+def test_recommend_prefers_more_relevant_action(memory):
+    # Two actions with identical track records (5/5 success each). The one whose
+    # supporting experiences are more relevant to the query should rank higher.
+    for _ in range(5):
+        memory.record("fix authentication login latency", "add a read cache", outcome="success")
+    for _ in range(5):
+        memory.record("authentication note", "rewrite the query", outcome="success")
+
+    rec = memory.recommend("authentication login latency is slow")
+    assert rec is not None
+    assert rec.recommended_action == "add a read cache"
+
+
+def test_relevance_weighting_is_ablatable(memory):
+    # The ablation hook must actually change the estimator: weighting on vs off
+    # produces different confidence for the same action.
+    for _ in range(5):
+        memory.record("authentication note", "rewrite the query", outcome="success")
+
+    on = memory.recommend("authentication login latency is slow", weight_by_relevance=True)
+    off = memory.recommend("authentication login latency is slow", weight_by_relevance=False)
+    assert on is not None and off is not None
+    assert on.recommended_action == off.recommended_action == "rewrite the query"
+    assert on.confidence != off.confidence
+
+
 def test_recommend_works_on_database_without_action_norm(tmp_path):
     # A database written before the action_norm column existed must be migrated
     # and backfilled on open so recommend() still groups correctly.
@@ -135,9 +161,21 @@ def test_recommend_works_on_database_without_action_norm(tmp_path):
     for i in range(5):
         con.execute(
             "INSERT INTO experiences VALUES (?,?,?,?,?,?,?,?,?)",
-            (str(i), "auth is slow", "Redis caching", "success", 1.0, "{}", None, "2026-01-01", None),
+            (
+                str(i),
+                "auth is slow",
+                "Redis caching",
+                "success",
+                1.0,
+                "{}",
+                None,
+                "2026-01-01",
+                None,
+            ),
         )
-        con.execute("INSERT INTO experiences_fts VALUES (?,?,?)", (str(i), "auth is slow", "Redis caching"))
+        con.execute(
+            "INSERT INTO experiences_fts VALUES (?,?,?)", (str(i), "auth is slow", "Redis caching")
+        )
     con.commit()
     con.close()
 
