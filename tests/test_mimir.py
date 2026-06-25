@@ -106,6 +106,64 @@ def test_recommend_returns_none_without_data(memory):
     assert memory.recommend("anything at all") is None
 
 
+def test_recommend_works_on_database_without_action_norm(tmp_path):
+    # A database written before the action_norm column existed must be migrated
+    # and backfilled on open so recommend() still groups correctly.
+    import sqlite3
+
+    db = str(tmp_path / "legacy.db")
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE experiences (id TEXT PRIMARY KEY, task TEXT NOT NULL, "
+        "action TEXT NOT NULL, outcome TEXT NOT NULL, score REAL NOT NULL, "
+        "context TEXT NOT NULL, embedding TEXT, created_at TEXT NOT NULL, superseded_by TEXT)"
+    )
+    con.execute("CREATE VIRTUAL TABLE experiences_fts USING fts5(id UNINDEXED, task, action)")
+    for i in range(5):
+        con.execute(
+            "INSERT INTO experiences VALUES (?,?,?,?,?,?,?,?,?)",
+            (str(i), "auth is slow", "Redis caching", "success", 1.0, "{}", None, "2026-01-01", None),
+        )
+        con.execute("INSERT INTO experiences_fts VALUES (?,?,?)", (str(i), "auth is slow", "Redis caching"))
+    con.commit()
+    con.close()
+
+    m = Mimir(db_path=db)
+    try:
+        rec = m.recommend("auth is slow")
+        assert rec is not None
+        assert rec.recommended_action == "Redis caching"
+        assert rec.success_count == 5
+        assert rec.based_on == 5
+    finally:
+        m.close()
+
+
+def test_recommend_groups_actions_instead_of_scanning_every_row():
+    # recommend aggregates in the backend, so the work it pulls back is bounded
+    # by the number of distinct actions, not the size of the store.
+    actions = ["add a cache", "add an index", "rewrite the query"]
+    small, big = Mimir(":memory:"), Mimir(":memory:")
+    try:
+        for i in range(60):
+            small.record(f"slow service {i}", actions[i % len(actions)], outcome="success")
+        for i in range(1200):
+            big.record(f"slow service {i}", actions[i % len(actions)], outcome="success")
+
+        small_stats = small._storage.aggregate_actions("slow service")
+        big_stats = big._storage.aggregate_actions("slow service")
+        assert len(small_stats) == len(big_stats) == len(actions)
+
+        # Counts stay exact across the full population (1200 / 3 actions).
+        rec = big.recommend("slow service")
+        assert rec is not None
+        assert rec.based_on == 400
+        assert rec.success_count == 400
+    finally:
+        small.close()
+        big.close()
+
+
 def test_recommend_ignores_actions_that_only_failed(memory):
     memory.record_failure("deploy fails", "force push", reason="broke prod")
     assert memory.recommend("deploy fails") is None

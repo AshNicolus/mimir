@@ -18,7 +18,7 @@ import threading
 from datetime import datetime
 
 from ..models import Experience, Outcome
-from .base import Storage
+from .base import ActionStat, Storage
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 _SIMPLE_KEY = re.compile(r"[A-Za-z0-9_]+")
@@ -40,6 +40,11 @@ def query_terms(query: str) -> list[str]:
     return meaningful or terms  # fall back if the query is all stopwords
 
 
+def normalize_action(action: str) -> str:
+    """Collapse case and whitespace so phrasings of the same action group together."""
+    return " ".join(action.lower().split())
+
+
 class SQLiteStorage(Storage):
     def __init__(self, db_path: str = ":memory:") -> None:
         if db_path not in (":memory:", "") and not db_path.startswith("file:"):
@@ -51,8 +56,6 @@ class SQLiteStorage(Storage):
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._fts = self._init_schema()
-
-    # -- schema -------------------------------------------------------------
 
     def _init_schema(self) -> bool:
         with self._lock:
@@ -66,6 +69,7 @@ class SQLiteStorage(Storage):
                     id            TEXT PRIMARY KEY,
                     task          TEXT NOT NULL,
                     action        TEXT NOT NULL,
+                    action_norm   TEXT,
                     outcome       TEXT NOT NULL,
                     score         REAL NOT NULL,
                     context       TEXT NOT NULL,
@@ -75,10 +79,17 @@ class SQLiteStorage(Storage):
                 )
                 """
             )
-            # No index on outcome: the default FTS recall selects rows via the
-            # match and joins by primary key, so outcome is only a residual
-            # filter the planner never indexes. The index just added write cost.
-            # Drop it so databases created before this change shed it too.
+            # Backfill action_norm for databases created before this column.
+            columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(experiences)")}
+            if "action_norm" not in columns:
+                self._conn.execute("ALTER TABLE experiences ADD COLUMN action_norm TEXT")
+                stale = self._conn.execute("SELECT id, action FROM experiences").fetchall()
+                self._conn.executemany(
+                    "UPDATE experiences SET action_norm = ? WHERE id = ?",
+                    [(normalize_action(r["action"]), r["id"]) for r in stale],
+                )
+            # The outcome index is unused: FTS recall joins by primary key and
+            # filters outcome as a residual. Drop it, including on older dbs.
             self._conn.execute("DROP INDEX IF EXISTS idx_experiences_outcome")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_experiences_created ON experiences(created_at)"
@@ -94,18 +105,17 @@ class SQLiteStorage(Storage):
             self._conn.commit()
             return fts_ok
 
-    # -- writes -------------------------------------------------------------
-
     def add(self, exp: Experience) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO experiences "
-                "(id, task, action, outcome, score, context, embedding, created_at, "
-                "superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, task, action, action_norm, outcome, score, context, embedding, "
+                "created_at, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     exp.id,
                     exp.task,
                     exp.action,
+                    normalize_action(exp.action),
                     exp.outcome.value,
                     exp.score,
                     json.dumps(exp.context),
@@ -137,8 +147,6 @@ class SQLiteStorage(Storage):
             self._conn.commit()
             return cur.rowcount > 0
 
-    # -- reads --------------------------------------------------------------
-
     def get(self, experience_id: str) -> Experience | None:
         with self._lock:
             row = self._conn.execute(
@@ -159,6 +167,66 @@ class SQLiteStorage(Storage):
     def count(self) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM experiences").fetchone()[0]
+
+    def aggregate_actions(self, query: str) -> list[ActionStat]:
+        terms = query_terms(query)
+        if not terms:
+            return []
+
+        if self._fts:
+            # Group and count in SQL: one row per action, not one per row.
+            match = " OR ".join(f'"{t}"' for t in terms)
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT MIN(e.action) AS action, "
+                    "SUM(e.outcome = 'success') AS success, "
+                    "SUM(e.outcome = 'failure') AS failure, "
+                    "SUM(e.outcome = 'partial') AS partial, "
+                    "COUNT(*) AS total, "
+                    "group_concat(e.id) AS ids "
+                    "FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
+                    "WHERE experiences_fts MATCH ? "
+                    "GROUP BY e.action_norm",
+                    (match,),
+                ).fetchall()
+            return [
+                ActionStat(
+                    action=row["action"],
+                    success=row["success"],
+                    failure=row["failure"],
+                    partial=row["partial"],
+                    total=row["total"],
+                    supporting_ids=row["ids"].split(","),
+                )
+                for row in rows
+            ]
+
+        # No FTS5: group in Python over the lightweight columns.
+        wanted = set(terms)
+        with self._lock:
+            rows = self._conn.execute("SELECT id, task, action, outcome FROM experiences").fetchall()
+        groups: dict[str, dict] = {}
+        for row in rows:
+            if not wanted & set(tokenize(f"{row['task']}\n{row['action']}")):
+                continue
+            group = groups.setdefault(
+                normalize_action(row["action"]),
+                {"action": row["action"], "success": 0, "failure": 0, "partial": 0, "ids": []},
+            )
+            group[row["outcome"]] += 1
+            group["ids"].append(row["id"])
+            group["action"] = min(group["action"], row["action"])  # stable representative
+        return [
+            ActionStat(
+                action=g["action"],
+                success=g["success"],
+                failure=g["failure"],
+                partial=g["partial"],
+                total=g["success"] + g["failure"] + g["partial"],
+                supporting_ids=g["ids"],
+            )
+            for g in groups.values()
+        ]
 
     def search(
         self,
@@ -252,8 +320,6 @@ class SQLiteStorage(Storage):
                 scored.append((exp, overlap / len(terms)))  # fraction of terms matched
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return scored
-
-    # -- helpers ------------------------------------------------------------
 
     def _row_to_experience(self, row: sqlite3.Row) -> Experience:
         return Experience(

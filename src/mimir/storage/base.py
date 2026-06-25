@@ -8,8 +8,24 @@ same interface later.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import NamedTuple
 
 from ..models import Experience
+
+
+class ActionStat(NamedTuple):
+    """Outcome counts for one action across all experiences matching a query.
+
+    The grouping (by normalized action) and counting happen in the backend so
+    recommend() never has to hydrate the whole matching population.
+    """
+
+    action: str  # a representative phrasing of the action
+    success: int
+    failure: int
+    partial: int
+    total: int
+    supporting_ids: list[str]
 
 
 class Storage(ABC):
@@ -34,6 +50,12 @@ class Storage(ABC):
         ``relevance_score`` is in [0, 1]. ``outcome`` and ``context`` are
         optional equality filters. ``k=None`` returns all matches.
         """
+
+    @abstractmethod
+    def aggregate_actions(self, query: str) -> list[ActionStat]:
+        """Group all experiences matching ``query`` by normalized action and
+        return outcome counts per action, so recommend() can rank without
+        hydrating every matching row."""
 
     @abstractmethod
     def delete(self, experience_id: str) -> bool:
