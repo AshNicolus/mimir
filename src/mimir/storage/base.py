@@ -18,6 +18,11 @@ class ActionStat(NamedTuple):
 
     The grouping (by normalized action) and counting happen in the backend so
     recommend() never has to hydrate the whole matching population.
+
+    The raw counts (success/failure/partial/total) are exact integers for
+    reporting. The weighted_* fields sum each experience's relevance to the
+    query instead of counting it as 1, so recommend() can rank on how relevant
+    the supporting evidence is, not just its success rate.
     """
 
     action: str  # a representative phrasing of the action
@@ -26,6 +31,9 @@ class ActionStat(NamedTuple):
     failure: int
     partial: int
     total: int
+    weighted_success: float
+    weighted_partial: float
+    weighted_total: float
 
 
 class Storage(ABC):

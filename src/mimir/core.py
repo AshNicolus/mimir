@@ -24,10 +24,12 @@ class Mimir:
         *,
         storage: Storage | None = None,
         embedder: Embedder | None = None,
+        weight_by_relevance: bool = True,
     ) -> None:
         self._storage = storage or SQLiteStorage(db_path)
         self._embedder = embedder or NullEmbedder()
         self._lock = threading.Lock()
+        self._weight_by_relevance = weight_by_relevance
 
     def record(
         self,
@@ -107,20 +109,35 @@ class Mimir:
         """Return the ``n`` most recently recorded experiences, newest first."""
         return self._storage.recent(n)
 
-    def recommend(self, task: str) -> Recommendation | None:
+    def recommend(
+        self, task: str, *, weight_by_relevance: bool | None = None
+    ) -> Recommendation | None:
         """Suggest a strategy for a new task by aggregating similar past
         experiences. Returns None if there's nothing relevant to go on.
 
         Confidence is the Wilson lower bound of each action's success rate, so a
-        9/10 action outranks a lucky 1/1. Counts cover all matches, not a sample.
+        9/10 action outranks a lucky 1/1. When relevance weighting is on (the
+        default), each experience contributes its relevance to the query rather
+        than a flat 1, so an action backed by more relevant evidence outranks an
+        equally-successful but less relevant one. Pass ``weight_by_relevance``
+        to override the instance default, which makes the weighting ablatable.
+
+        Reported counts always cover the full matching population exactly;
+        weighting only affects ranking.
         """
+        weighted = self._weight_by_relevance if weight_by_relevance is None else weight_by_relevance
         best_stat = None
         best_confidence = -1.0
         for stat in self._storage.aggregate_actions(task):
-            effective_successes = stat.success + 0.5 * stat.partial
-            if effective_successes == 0:
+            if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
-            confidence = wilson_lower_bound(effective_successes, stat.total)
+            if weighted:
+                successes = stat.weighted_success + 0.5 * stat.weighted_partial
+                total = stat.weighted_total
+            else:
+                successes = stat.success + 0.5 * stat.partial
+                total = stat.total
+            confidence = wilson_lower_bound(successes, total)
             if confidence > best_confidence:
                 best_confidence, best_stat = confidence, stat
         if best_stat is None:
@@ -165,12 +182,14 @@ def default_score(outcome: Outcome) -> float:
     return {Outcome.SUCCESS: 1.0, Outcome.PARTIAL: 0.5, Outcome.FAILURE: 0.0}[outcome]
 
 
-def wilson_lower_bound(successes: float, total: int, z: float = 1.96) -> float:
+def wilson_lower_bound(successes: float, total: float, z: float = 1.96) -> float:
     """Lower bound of a Wilson score interval for a binomial proportion.
 
-    Rewards both a high success rate and a large sample size.
+    Rewards both a high success rate and a large sample size. ``total`` may be a
+    relevance-weighted (non-integer) effective count, which turns this into a
+    weighted-evidence estimator: a heuristic, not a strict binomial interval.
     """
-    if total == 0:
+    if total <= 0:
         return 0.0
     phat = successes / total
     denom = 1 + z * z / total
