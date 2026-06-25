@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import math
 import threading
-from collections import defaultdict
 
 from .embeddings import Embedder, NullEmbedder, cosine_similarity
 from .models import Experience, Outcome, Recommendation
@@ -29,8 +28,6 @@ class Mimir:
         self._storage = storage or SQLiteStorage(db_path)
         self._embedder = embedder or NullEmbedder()
         self._lock = threading.Lock()
-
-    # -- writes -------------------------------------------------------------
 
     def record(
         self,
@@ -81,8 +78,6 @@ class Mimir:
             self._storage.add(exp)
         return exp
 
-    # -- reads --------------------------------------------------------------
-
     def recall(
         self,
         query: str,
@@ -119,35 +114,20 @@ class Mimir:
         Confidence is the Wilson lower bound of each action's success rate, so a
         9/10 action outranks a lucky 1/1. Counts cover all matches, not a sample.
         """
-        candidates = self._storage.search(task, k=None)
-        if not candidates:
-            return None
-
-        groups: dict[str, list[tuple[Experience, float]]] = defaultdict(list)
-        for exp, rel in candidates:
-            groups[normalize_action(exp.action)].append((exp, rel))
-
         best: Recommendation | None = None
-        for action_key, items in groups.items():
-            succ = sum(1 for e, _ in items if e.outcome is Outcome.SUCCESS)
-            fail = sum(1 for e, _ in items if e.outcome is Outcome.FAILURE)
-            part = sum(1 for e, _ in items if e.outcome is Outcome.PARTIAL)
-            total = len(items)
-            effective_successes = succ + 0.5 * part
+        for stat in self._storage.aggregate_actions(task):
+            effective_successes = stat.success + 0.5 * stat.partial
             if effective_successes == 0:
                 continue  # never recommend an action with no wins
-            confidence = wilson_lower_bound(effective_successes, total)
-            # Use the most relevant phrasing of the action as the display string.
-            display_action = max(items, key=lambda pair: pair[1])[0].action
             rec = Recommendation(
                 task=task,
-                recommended_action=display_action,
-                confidence=confidence,
-                success_count=succ,
-                failure_count=fail,
-                partial_count=part,
-                based_on=total,
-                supporting_ids=[e.id for e, _ in items],
+                recommended_action=stat.action,
+                confidence=wilson_lower_bound(effective_successes, stat.total),
+                success_count=stat.success,
+                failure_count=stat.failure,
+                partial_count=stat.partial,
+                based_on=stat.total,
+                supporting_ids=stat.supporting_ids,
             )
             if best is None or rec.confidence > best.confidence:
                 best = rec
@@ -165,8 +145,6 @@ class Mimir:
         rescored.sort(key=lambda pair: pair[1], reverse=True)
         return rescored
 
-    # -- misc ---------------------------------------------------------------
-
     def count(self) -> int:
         return self._storage.count()
 
@@ -182,10 +160,6 @@ class Mimir:
 
 def default_score(outcome: Outcome) -> float:
     return {Outcome.SUCCESS: 1.0, Outcome.PARTIAL: 0.5, Outcome.FAILURE: 0.0}[outcome]
-
-
-def normalize_action(action: str) -> str:
-    return " ".join(action.lower().split())
 
 
 def wilson_lower_bound(successes: float, total: int, z: float = 1.96) -> float:
