@@ -247,7 +247,7 @@ Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
 ## Status
 
-Alpha (`0.1.2`): **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Phase 1 (episodic + failure memory) is complete and tested; the recommendation engine works today via relevance-weighted outcome aggregation with pluggable action clustering (no LLM). APIs may still change before `1.0`. Feedback and ideas welcome.
+Alpha (`0.1.3`): **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Episodic and failure memory are complete and tested, and the recommendation engine works today via relevance-weighted outcome aggregation with pluggable action clustering (no LLM). `0.1.3` adds hybrid keyword + vector recall (optional sqlite-vec ANN index), schema versioning with a migration runner, concurrent reads under WAL, experience superseding for staleness, and an outcome/score consistency check. APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
