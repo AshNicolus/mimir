@@ -179,3 +179,27 @@ def test_recommendation_str_is_readable(memory):
     text = str(rec)
     assert "Redis caching" in text
     assert "confidence" in text
+
+
+def test_recommend_excludes_superseded_from_counts(memory):
+    # An older strategy, even with a winning record, drops out of recommend once
+    # superseded; its outcomes no longer count toward any action.
+    old = memory.record("auth is slow", "Redis caching", outcome="success")
+    memory.record("auth is slow", "rewrite the query", outcome="success")
+    memory.supersede(old.id, memory.record("auth is slow", "rewrite the query").id)
+
+    rec = memory.recommend("auth is slow")
+    assert rec is not None
+    assert rec.recommended_action == "rewrite the query"
+    assert old.id not in rec.supporting_ids
+
+
+def test_recommend_can_include_superseded(memory):
+    # Same action on both, so the superseded one and its replacement group
+    # together: by default only the replacement counts, but opting in counts both.
+    old = memory.record("auth is slow", "Redis caching", outcome="success")
+    new = memory.record("auth is slow", "Redis caching", outcome="success")
+    memory.supersede(old.id, new.id)
+
+    assert memory.recommend("auth is slow").based_on == 1
+    assert memory.recommend("auth is slow", include_superseded=True).based_on == 2

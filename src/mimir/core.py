@@ -40,8 +40,13 @@ class Mimir:
         outcome: str | Outcome = Outcome.SUCCESS,
         score: float | None = None,
         context: dict | None = None,
+        supersedes: str | None = None,
     ) -> Experience:
-        """Record an experience: a task, the action taken, and how it went."""
+        """Record an experience: a task, the action taken, and how it went.
+
+        Pass ``supersedes`` with an existing id to mark that older experience
+        as replaced by this one, hiding it from recall and recommendation.
+        """
         outcome = Outcome(outcome) if not isinstance(outcome, Outcome) else outcome
         if score is None:
             score = default_score(outcome)
@@ -52,7 +57,10 @@ class Mimir:
             score=score,
             context=context or {},
         )
-        return self.write(exp)
+        new = self.write(exp)
+        if supersedes is not None:
+            self.supersede(supersedes, new.id)
+        return new
 
     def record_failure(
         self,
@@ -61,13 +69,22 @@ class Mimir:
         reason: str | None = None,
         score: float = 0.0,
         context: dict | None = None,
+        supersedes: str | None = None,
     ) -> Experience:
         """Record a failure. Stored like any experience but with outcome=failure,
         so agents can recall what *didn't* work and stop repeating it."""
         ctx = dict(context or {})
         if reason:
             ctx["failure_reason"] = reason
-        return self.record(task, action, outcome=Outcome.FAILURE, score=score, context=ctx)
+        return self.record(
+            task, action, outcome=Outcome.FAILURE, score=score, context=ctx, supersedes=supersedes
+        )
+
+    def supersede(self, old_id: str, new_id: str) -> bool:
+        """Mark ``old_id`` as superseded by ``new_id``. Superseded experiences
+        are hidden from recall and recommendation by default, while staying
+        retrievable by id. Returns True if ``old_id`` existed."""
+        return self._storage.set_superseded_by(old_id, new_id)
 
     def write(self, exp: Experience) -> Experience:
         """The single write chokepoint. Validation/provenance/firewall hooks go here."""
@@ -88,20 +105,27 @@ class Mimir:
         k: int = 5,
         outcome: str | Outcome | None = None,
         context: dict | None = None,
+        include_superseded: bool = False,
     ) -> list[Experience]:
         """Return the most relevant past experiences for ``query``.
 
         With an embedder configured, recall is hybrid: keyword and vector
         candidates are fused, so an experience can be found by meaning even with
         no shared words. Without one, it is plain keyword search.
+
+        Superseded experiences are excluded unless ``include_superseded`` is True.
         """
         outcome_val = outcome.value if isinstance(outcome, Outcome) else outcome
         width = max(k * 4, k)
-        keyword = self._storage.search(query, k=width, outcome=outcome_val, context=context)
+        keyword = self._storage.search(
+            query, k=width, outcome=outcome_val, context=context,
+            include_superseded=include_superseded,
+        )
         if not self._embedder.enabled:
             return [exp for exp, _ in keyword[:k]]
         vector = self._storage.vector_search(
-            self._embedder.embed(query), k=width, outcome=outcome_val, context=context
+            self._embedder.embed(query), k=width, outcome=outcome_val, context=context,
+            include_superseded=include_superseded,
         )
         fused = reciprocal_rank_fusion(keyword, vector)
         return [exp for exp, _ in fused[:k]]
@@ -119,7 +143,11 @@ class Mimir:
         return self._storage.recent(n)
 
     def recommend(
-        self, task: str, *, weight_by_relevance: bool | None = None
+        self,
+        task: str,
+        *,
+        weight_by_relevance: bool | None = None,
+        include_superseded: bool = False,
     ) -> Recommendation | None:
         """Suggest a strategy for a new task by aggregating similar past
         experiences. Returns None if there's nothing relevant to go on.
@@ -137,7 +165,7 @@ class Mimir:
         weighted = self._weight_by_relevance if weight_by_relevance is None else weight_by_relevance
         best_stat = None
         best_confidence = -1.0
-        for stat in self._storage.aggregate_actions(task):
+        for stat in self._storage.aggregate_actions(task, include_superseded=include_superseded):
             if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
             if weighted:
@@ -159,7 +187,9 @@ class Mimir:
             failure_count=best_stat.failure,
             partial_count=best_stat.partial,
             based_on=best_stat.total,
-            supporting_ids=self._storage.supporting_ids(task, best_stat.key),
+            supporting_ids=self._storage.supporting_ids(
+                task, best_stat.key, include_superseded=include_superseded
+            ),
         )
 
     def count(self) -> int:
