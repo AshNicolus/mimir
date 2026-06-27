@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 
 try:
@@ -108,31 +109,80 @@ class SQLiteStorage(Storage):
         if db_path not in (":memory:", "") and not db_path.startswith("file:"):
             parent = os.path.dirname(os.path.abspath(db_path))
             os.makedirs(parent, exist_ok=True)
+        self._db_path = db_path
+        # In-memory databases can't share data across connections and don't get
+        # WAL, so they stay single-connection. File databases use WAL: readers
+        # get their own connection and run concurrently, writers are serialized.
+        self._shared = db_path in (":memory:", "")
         self._clusterer = clusterer or ExactClusterer()
-        # check_same_thread=False + an explicit lock lets the store be shared
-        # across threads safely.
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
+        self._shared_lock = threading.RLock()  # guards the single shared conn
+        self._write_lock = threading.RLock()  # serializes writers (file mode)
+        self._conn_lock = threading.Lock()  # guards the connection registry
+        self._connections: list[sqlite3.Connection] = []
+        self._readers = threading.local()
         self._vec_dim: int | None = None  # set once the ANN table exists
-        self._vec = self.load_vec()
+        # The primary connection runs migrations and serves as the writer.
+        self._conn = self.open_connection(load_extension=False)
+        self._vec = self.load_vec(self._conn)
         self._fts = self.init_schema()
 
+    def open_connection(self, *, load_extension: bool) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            self._db_path, check_same_thread=False, uri=self._db_path.startswith("file:")
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")  # wait out a busy writer, don't fail
+        if load_extension and self._vec:
+            self.load_vec(conn)
+        with self._conn_lock:
+            self._connections.append(conn)
+        return conn
+
+    def reader(self) -> sqlite3.Connection:
+        """The calling thread's read connection, opened on first use. File mode
+        only; shared mode reads go through the single connection."""
+        conn = getattr(self._readers, "conn", None)
+        if conn is None:
+            conn = self.open_connection(load_extension=True)
+            self._readers.conn = conn
+        return conn
+
+    @contextmanager
+    def reading(self):
+        # File mode: lock-free, each thread on its own connection (WAL readers
+        # don't block each other). Shared mode: serialize on the one connection.
+        if self._shared:
+            with self._shared_lock:
+                yield self._conn
+        else:
+            yield self.reader()
+
+    @contextmanager
+    def writing(self):
+        # One writer at a time, committing on success and rolling back on error.
+        lock = self._shared_lock if self._shared else self._write_lock
+        with lock:
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
     def init_schema(self) -> bool:
-        with self._lock:
-            # WAL improves read/write concurrency and durability; NORMAL sync is
-            # the standard safe-and-fast pairing with WAL.
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-            self.run_migrations()
-            fts_ok = self.init_fts()
-            if self._vec:
-                # Reuse a prior index, else backfill one from existing rows.
-                self._vec_dim = self.detect_vec_dim()
-                if self._vec_dim is None:
-                    self.backfill_vec()
-            self._conn.commit()
-            return fts_ok
+        # Runs once at construction on the primary connection, before any other
+        # thread can touch the store, so it needs no locking.
+        self.run_migrations()
+        fts_ok = self.init_fts()
+        if self._vec:
+            # Reuse a prior index, else backfill one from existing rows.
+            self._vec_dim = self.detect_vec_dim()
+            if self._vec_dim is None:
+                self.backfill_vec()
+        self._conn.commit()
+        return fts_ok
 
     def run_migrations(self) -> None:
         """Apply pending migrations, stamping user_version after each so an
@@ -157,15 +207,15 @@ class SQLiteStorage(Storage):
         except sqlite3.OperationalError:
             return False
 
-    def load_vec(self) -> bool:
-        """Load sqlite-vec if installed and loadable; never raise. The ANN index
-        is a pure optimization, so failure just keeps the cosine fallback."""
+    def load_vec(self, conn: sqlite3.Connection) -> bool:
+        """Load sqlite-vec into ``conn`` if installed and loadable; never raise.
+        The ANN index is a pure optimization, so failure keeps the cosine fallback."""
         if sqlite_vec is None:
             return False
         try:
-            self._conn.enable_load_extension(True)
-            sqlite_vec.load(self._conn)
-            self._conn.enable_load_extension(False)
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
             return True
         except (AttributeError, sqlite3.OperationalError):
             return False
@@ -216,9 +266,9 @@ class SQLiteStorage(Storage):
         return [Cluster(key=r["key"], action=r["action"]) for r in rows]
 
     def add(self, exp: Experience) -> None:
-        with self._lock:
+        with self.writing() as conn:
             action_norm = self._clusterer.key(exp.action, self.known_clusters)
-            self._conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO experiences "
                 "(id, task, action, action_norm, outcome, score, context, embedding, "
                 "created_at, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -239,8 +289,8 @@ class SQLiteStorage(Storage):
                 # Keep FTS in sync on re-record: clear any stale row for this id
                 # first, otherwise INSERT OR REPLACE above would leave a duplicate
                 # FTS entry and skew search results.
-                self._conn.execute("DELETE FROM experiences_fts WHERE id = ?", (exp.id,))
-                self._conn.execute(
+                conn.execute("DELETE FROM experiences_fts WHERE id = ?", (exp.id,))
+                conn.execute(
                     "INSERT INTO experiences_fts (id, task, action) VALUES (?, ?, ?)",
                     (exp.id, exp.task, exp.action),
                 )
@@ -248,47 +298,41 @@ class SQLiteStorage(Storage):
                 self.ensure_vec_table(len(exp.embedding))
                 if len(exp.embedding) == self._vec_dim:
                     # Clear any prior row so a re-record replaces, not duplicates.
-                    self._conn.execute(
-                        "DELETE FROM vec_experiences WHERE experience_id = ?", (exp.id,)
-                    )
-                    self._conn.execute(
+                    conn.execute("DELETE FROM vec_experiences WHERE experience_id = ?", (exp.id,))
+                    conn.execute(
                         "INSERT INTO vec_experiences(experience_id, embedding) VALUES (?, ?)",
                         (exp.id, sqlite_vec.serialize_float32([float(x) for x in exp.embedding])),
                     )
-            self._conn.commit()
 
     def delete(self, experience_id: str) -> bool:
-        with self._lock:
-            cur = self._conn.execute("DELETE FROM experiences WHERE id = ?", (experience_id,))
+        with self.writing() as conn:
+            cur = conn.execute("DELETE FROM experiences WHERE id = ?", (experience_id,))
             if self._fts:
-                self._conn.execute("DELETE FROM experiences_fts WHERE id = ?", (experience_id,))
+                conn.execute("DELETE FROM experiences_fts WHERE id = ?", (experience_id,))
             if self._vec and self._vec_dim is not None:
-                self._conn.execute(
-                    "DELETE FROM vec_experiences WHERE experience_id = ?", (experience_id,)
-                )
-            self._conn.commit()
+                conn.execute("DELETE FROM vec_experiences WHERE experience_id = ?", (experience_id,))
             return cur.rowcount > 0
 
     def get(self, experience_id: str) -> Experience | None:
-        with self._lock:
-            row = self._conn.execute(
+        with self.reading() as conn:
+            row = conn.execute(
                 "SELECT * FROM experiences WHERE id = ?", (experience_id,)
             ).fetchone()
         return self.row_to_experience(row) if row else None
 
     def recent(self, n: int = 10) -> list[Experience]:
-        with self._lock:
+        with self.reading() as conn:
             # Tie-break on rowid (monotonic insertion order) because created_at
             # resolution can collide for records written in the same instant.
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT * FROM experiences ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (n,),
             ).fetchall()
         return [self.row_to_experience(r) for r in rows]
 
     def count(self) -> int:
-        with self._lock:
-            return self._conn.execute("SELECT COUNT(*) FROM experiences").fetchone()[0]
+        with self.reading() as conn:
+            return conn.execute("SELECT COUNT(*) FROM experiences").fetchone()[0]
 
     def aggregate_actions(self, query: str) -> list[ActionStat]:
         terms = query_terms(query)
@@ -300,8 +344,8 @@ class SQLiteStorage(Storage):
             # inner query scores each match with bm25 so the outer query can sum
             # relevance per action alongside the raw counts.
             match = " OR ".join(f'"{t}"' for t in terms)
-            with self._lock:
-                rows = self._conn.execute(
+            with self.reading() as conn:
+                rows = conn.execute(
                     "SELECT key, MIN(action) AS action, "
                     "SUM(outcome = 'success') AS success, "
                     "SUM(outcome = 'failure') AS failure, "
@@ -346,8 +390,8 @@ class SQLiteStorage(Storage):
         # No FTS5: group in Python over the lightweight columns. Relevance is
         # the fraction of query terms a row matches, same as fallback search.
         wanted = set(terms)
-        with self._lock:
-            rows = self._conn.execute(
+        with self.reading() as conn:
+            rows = conn.execute(
                 "SELECT task, action, action_norm, outcome FROM experiences"
             ).fetchall()
         groups: dict[str, dict] = {}
@@ -395,8 +439,8 @@ class SQLiteStorage(Storage):
             return []
         if self._fts:
             match = " OR ".join(f'"{t}"' for t in terms)
-            with self._lock:
-                rows = self._conn.execute(
+            with self.reading() as conn:
+                rows = conn.execute(
                     "SELECT e.id FROM experiences_fts JOIN experiences e "
                     "ON e.id = experiences_fts.id "
                     "WHERE experiences_fts MATCH ? AND e.action_norm = ? LIMIT ?",
@@ -405,8 +449,8 @@ class SQLiteStorage(Storage):
             return [row["id"] for row in rows]
 
         wanted = set(terms)
-        with self._lock:
-            rows = self._conn.execute(
+        with self.reading() as conn:
+            rows = conn.execute(
                 "SELECT id, task, action, action_norm FROM experiences WHERE action_norm = ?",
                 (action_key,),
             ).fetchall()
@@ -442,8 +486,8 @@ class SQLiteStorage(Storage):
         filters = context_sql_filters(context)
         has_filter = outcome is not None or bool(context)
         query = sqlite_vec.serialize_float32([float(x) for x in embedding])
-        with self._lock:
-            total = self._conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
+        with self.reading() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
             if total == 0:
                 return []
             if k is None:
@@ -454,7 +498,7 @@ class SQLiteStorage(Storage):
                 pool = min(total, k)
             if pool < 1:
                 return []
-            neighbours = self._conn.execute(
+            neighbours = conn.execute(
                 "SELECT experience_id, distance FROM vec_experiences "
                 "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
                 (query, pool),
@@ -473,8 +517,8 @@ class SQLiteStorage(Storage):
             where.append("json_extract(context, ?) = ?")
             params += [path, value]
         sql = "SELECT * FROM experiences WHERE " + " AND ".join(where)
-        with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
+        with self.reading() as conn:
+            rows = conn.execute(sql, params).fetchall()
 
         scored = []
         for row in rows:
@@ -506,8 +550,8 @@ class SQLiteStorage(Storage):
             params += [path, value]
         sql = "SELECT * FROM experiences WHERE " + " AND ".join(where)
 
-        with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
+        with self.reading() as conn:
+            rows = conn.execute(sql, params).fetchall()
         scored = []
         for row in rows:
             exp = self.row_to_experience(row)
@@ -575,8 +619,8 @@ class SQLiteStorage(Storage):
             sql += " LIMIT ?"
             params.append(limit)
 
-        with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
+        with self.reading() as conn:
+            rows = conn.execute(sql, params).fetchall()
         return [(self.row_to_experience(r), bm25_to_score(r["rank"])) for r in rows]
 
     def fallback_search(
@@ -601,8 +645,8 @@ class SQLiteStorage(Storage):
         if where:
             sql += " WHERE " + " AND ".join(where)
 
-        with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
+        with self.reading() as conn:
+            rows = conn.execute(sql, params).fetchall()
         scored = []
         for row in rows:
             exp = self.row_to_experience(row)
@@ -626,8 +670,11 @@ class SQLiteStorage(Storage):
         )
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        # Close every connection handed out, readers in other threads included.
+        with self._conn_lock:
+            for conn in self._connections:
+                conn.close()
+            self._connections.clear()
 
 
 def context_matches(stored: dict, wanted: dict) -> bool:
