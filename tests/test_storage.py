@@ -101,6 +101,71 @@ def test_concurrent_writes_are_safe(memory):
     assert memory.count() == 100
 
 
+def run_threads(target, n):
+    threads = [threading.Thread(target=target, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+
+def test_concurrent_writes_on_file_db_are_safe(tmp_path):
+    # The file path serializes writers across their own connections, so no
+    # update is lost even though reads no longer share one global lock.
+    m = Mimir(db_path=str(tmp_path / "m.db"))
+    try:
+        run_threads(lambda n: [m.record(f"task {n}-{i}", f"action {n}-{i}") for i in range(20)], 5)
+        assert m.count() == 100
+    finally:
+        m.close()
+
+
+def test_concurrent_reads_on_file_db_are_consistent(tmp_path):
+    # Many readers hitting the store at once must each get correct results and
+    # raise nothing, even while a writer is active.
+    m = Mimir(db_path=str(tmp_path / "m.db"))
+    for i in range(200):
+        m.record(f"fix latency in service {i}", "add cache", outcome="success")
+    errors = []
+
+    def reader(_):
+        try:
+            for _ in range(100):
+                assert m.recall("latency service", k=5)
+                assert m.count() == 200
+        except Exception as exc:  # surface any thread failure to the main thread
+            errors.append(repr(exc))
+
+    try:
+        run_threads(reader, 6)
+        assert errors == []
+    finally:
+        m.close()
+
+
+def test_file_db_opens_a_connection_per_reader_thread(tmp_path):
+    # File mode gives each reader thread its own connection (the basis for
+    # concurrent reads); close() then disposes of all of them.
+    m = Mimir(db_path=str(tmp_path / "m.db"))
+    m.record("task", "action")
+    storage = m._storage
+    assert not storage._shared
+
+    run_threads(lambda _: m.recall("task"), 4)
+    assert len(storage._connections) >= 5  # one writer plus a reader per thread
+
+    m.close()
+    assert storage._connections == []
+
+
+def test_memory_db_stays_single_connection(memory):
+    # In-memory databases can't share data across connections, so they keep the
+    # single-connection model regardless of how many threads read.
+    assert memory._storage._shared
+    run_threads(lambda _: memory.recall("anything"), 4)
+    assert len(memory._storage._connections) == 1
+
+
 def test_recommend_works_on_database_without_action_norm(tmp_path):
     # A database written before the action_norm column existed must be migrated
     # and backfilled on open so recommend() still groups correctly.
