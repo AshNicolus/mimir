@@ -7,10 +7,11 @@ outcome), not documents. These models are that contract.
 from __future__ import annotations
 
 import uuid
+import warnings
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def utcnow() -> datetime:
@@ -19,6 +20,10 @@ def utcnow() -> datetime:
 
 def new_id() -> str:
     return uuid.uuid4().hex
+
+
+class OutcomeScoreWarning(UserWarning):
+    """An experience's score contradicts its outcome (e.g. a failure scored high)."""
 
 
 class Outcome(str, Enum):
@@ -39,7 +44,7 @@ class Experience(BaseModel):
     task: str  # the problem being solved
     action: str  # what was actually done
     outcome: Outcome = Outcome.SUCCESS
-    score: float = Field(default=1.0, ge=0.0, le=1.0)  # quality/confidence of the outcome
+    score: float = Field(default=1.0, ge=0.0, le=1.0)  # how well it went: high for success, low for failure
     context: dict = Field(default_factory=dict)  # env, tags, agent_id, domain, ...
     embedding: list[float] | None = None  # set only when an embedder is configured
     created_at: datetime = Field(default_factory=utcnow)
@@ -52,6 +57,25 @@ class Experience(BaseModel):
         if not cleaned:
             raise ValueError("must not be empty or whitespace")
         return cleaned
+
+    @model_validator(mode="after")
+    def warn_if_score_contradicts_outcome(self) -> Experience:
+        # score is coupled to outcome. A clear contradiction is allowed (the
+        # record still lands) but warned, so callers can spot or escalate it.
+        # Partial sits in the middle, so any score is plausible there.
+        if self.outcome is Outcome.SUCCESS and self.score < 0.5:
+            mismatch = "a success scored below 0.5"
+        elif self.outcome is Outcome.FAILURE and self.score > 0.5:
+            mismatch = "a failure scored above 0.5"
+        else:
+            return self
+        warnings.warn(
+            f"score={self.score} contradicts outcome='{self.outcome.value}' "
+            f"({mismatch}); recording it anyway",
+            OutcomeScoreWarning,
+            stacklevel=2,
+        )
+        return self
 
     def text(self) -> str:
         """The text Mimir indexes and embeds for retrieval."""

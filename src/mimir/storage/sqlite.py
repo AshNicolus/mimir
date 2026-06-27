@@ -657,7 +657,9 @@ class SQLiteStorage(Storage):
         return scored
 
     def row_to_experience(self, row: sqlite3.Row) -> Experience:
-        return Experience(
+        # Storage holds already-validated rows, so skip re-validation on read.
+        # That also avoids re-emitting the outcome/score warning on every recall.
+        return Experience.model_construct(
             id=row["id"],
             task=row["task"],
             action=row["action"],

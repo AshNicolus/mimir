@@ -5,7 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 from .clustering import ActionClusterer, EmbeddingClusterer, ExactClusterer
 from .core import Mimir
 from .embeddings import Embedder, NullEmbedder
-from .models import Experience, Outcome, Recommendation
+from .models import Experience, Outcome, OutcomeScoreWarning, Recommendation
 from .storage import SQLiteStorage, Storage
 
 try:
@@ -17,6 +17,7 @@ __all__ = [
     "Mimir",
     "Experience",
     "Outcome",
+    "OutcomeScoreWarning",
     "Recommendation",
     "Storage",
     "SQLiteStorage",
