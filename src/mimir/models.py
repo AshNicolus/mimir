@@ -48,7 +48,7 @@ class Experience(BaseModel):
     context: dict = Field(default_factory=dict)  # env, tags, agent_id, domain, ...
     embedding: list[float] | None = None  # set only when an embedder is configured
     created_at: datetime = Field(default_factory=utcnow)
-    superseded_by: str | None = None  # for staleness/versioning (future use)
+    superseded_by: str | None = None  # id of the experience that replaced this one
 
     @field_validator("task", "action")
     @classmethod
@@ -57,6 +57,16 @@ class Experience(BaseModel):
         if not cleaned:
             raise ValueError("must not be empty or whitespace")
         return cleaned
+
+    @field_validator("created_at")
+    @classmethod
+    def as_utc(cls, value: datetime) -> datetime:
+        # Storage sorts on the ISO string, so all timestamps must share one zone
+        # for lexicographic order to match chronological order. Normalize to UTC,
+        # treating a naive datetime as already UTC.
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     @model_validator(mode="after")
     def warn_if_score_contradicts_outcome(self) -> Experience:
