@@ -330,8 +330,9 @@ class SQLiteStorage(Storage):
 
     def recent(self, n: int = 10) -> list[Experience]:
         with self.reading() as conn:
-            # Tie-break on rowid (monotonic insertion order) because created_at
-            # resolution can collide for records written in the same instant.
+            # created_at is stored as a UTC ISO string (enforced on the model),
+            # so ordering it lexicographically matches chronological order. Tie-
+            # break on rowid since same-instant writes share a timestamp.
             rows = conn.execute(
                 "SELECT * FROM experiences ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (n,),

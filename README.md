@@ -127,6 +127,13 @@ The distribution is named `mimir-learn` on PyPI, but you import it as `mimir`:
 from mimir import Mimir
 ```
 
+Optional extras (keyword recall works without either):
+
+```bash
+pip install "mimir-learn[embeddings]"  # local embeddings for semantic recall
+pip install "mimir-learn[vector]"      # sqlite-vec ANN index for fast vector search
+```
+
 For development:
 
 ```bash
@@ -189,6 +196,31 @@ memory = Mimir(clusterer=EmbeddingClusterer(my_embedder))
 `ExactClusterer` is the default and needs no embeddings. Any other strategy can
 implement `ActionClusterer`.
 
+## Hybrid recall and the vector index
+
+Configure an embedder and recall becomes hybrid: keyword (SQLite FTS5) and vector
+candidates are fused with reciprocal-rank fusion, so an experience can be found by
+meaning even when it shares no words with the query. Install the `vector` extra to
+back vector search with a [sqlite-vec](https://github.com/asg017/sqlite-vec) ANN
+index; without it, recall falls back to a dependency-free Python cosine scan, so
+the behavior is identical and only the speed differs.
+
+## Superseding stale experiences
+
+Knowledge goes stale. Mark an old experience as replaced, and it drops out of
+recall and recommendation by default while staying retrievable by id:
+
+```python
+# record a replacement and link it in one call
+new = memory.record("auth is slow", "add a read cache", supersedes=old_id)
+
+# or link two experiences that already exist
+memory.supersede(old_id, new.id)
+```
+
+Pass `include_superseded=True` to `recall()` or `recommend()` to see superseded
+rows anyway, which is useful for studying concept drift and decay.
+
 ## Roadmap
 
 | Phase | Goal | Status |
@@ -197,15 +229,18 @@ implement `ActionClusterer`.
 | **2: Failure memory** | `record_failure()`, failures queried separately | ✅ Done |
 | **3: Reflection engine** | `reflect()`: cluster experiences, synthesize patterns (LLM) | Planned |
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
-| **5: Recommendation engine** | `recommend()`: rank strategies for a new task | 🛠️ Relevance-weighted aggregation, pluggable action clustering (non-LLM) |
+| **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Relevance-weighted aggregation, pluggable action clustering (non-LLM) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | Future |
+| **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
+| **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` | ✅ Done |
+| **Concurrency** | Per-thread connections so reads scale under WAL, writes serialized | ✅ Done |
 | **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows |  Python 3.10–3.12 |
 
 ## Scaling path
 
 Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
-1. **v1**: SQLite, in-process, single agent.
+1. **v1**: SQLite, in-process; WAL with per-thread connections so reads scale across threads while writes serialize.
 2. **v2**: Postgres + pgvector backend for concurrent multi-agent writes.
 3. **v3**: extract the (slow, batch) reflection engine into an async worker.
 4. **v4**: Redis cache for hot/recent experiences on the read path.

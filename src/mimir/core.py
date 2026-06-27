@@ -87,7 +87,12 @@ class Mimir:
         return self._storage.set_superseded_by(old_id, new_id)
 
     def write(self, exp: Experience) -> Experience:
-        """The single write chokepoint. Validation/provenance/firewall hooks go here."""
+        """The single write chokepoint. Validation/provenance/firewall hooks go here.
+
+        Returns the stored experience. When an embedder fills in the embedding,
+        the return value is a copy carrying it; the passed-in object is left
+        untouched.
+        """
         # Fail fast with a clear message rather than crashing deep in storage.
         try:
             json.dumps(exp.context)
@@ -95,7 +100,8 @@ class Mimir:
             raise ValueError(f"context must be JSON-serializable: {exc}") from exc
         with self._lock:
             if self._embedder.enabled and exp.embedding is None:
-                exp.embedding = self._embedder.embed(exp.text())
+                # Copy rather than mutate the caller's object.
+                exp = exp.model_copy(update={"embedding": self._embedder.embed(exp.text())})
             self._storage.add(exp)
         return exp
 
@@ -116,7 +122,7 @@ class Mimir:
         Superseded experiences are excluded unless ``include_superseded`` is True.
         """
         outcome_val = outcome.value if isinstance(outcome, Outcome) else outcome
-        width = max(k * 4, k)
+        width = k * 4  # over-fetch candidates before fusing and trimming to k
         keyword = self._storage.search(
             query, k=width, outcome=outcome_val, context=context,
             include_superseded=include_superseded,

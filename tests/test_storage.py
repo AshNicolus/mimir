@@ -109,6 +109,50 @@ def test_record_with_supersedes_links_in_one_call(memory):
     assert [e.id for e in memory.recall("login", k=5)] == [new.id]
 
 
+def test_created_at_is_normalized_to_utc():
+    from datetime import datetime, timedelta, timezone
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    aware = Experience(task="t", action="a", created_at=datetime(2026, 1, 1, 12, 0, tzinfo=ist))
+    assert aware.created_at == datetime(2026, 1, 1, 6, 30, tzinfo=timezone.utc)
+
+    naive = Experience(task="t", action="a", created_at=datetime(2026, 1, 1, 12, 0))
+    assert naive.created_at.tzinfo == timezone.utc  # naive read as already-UTC
+
+
+def test_recent_orders_by_utc_instant_across_timezones(memory):
+    # The early record's local wall clock (11:00 +05:30) looks later as a string
+    # than the late one (09:00 UTC), but in real time it is earlier. Ordering
+    # must follow the true UTC instant, not the raw local string.
+    from datetime import datetime, timedelta, timezone
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    memory.write(Experience(task="early", action="a",
+                            created_at=datetime(2026, 1, 1, 11, 0, tzinfo=ist)))  # 05:30 UTC
+    memory.write(Experience(task="late", action="b",
+                            created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)))
+
+    assert [e.task for e in memory.recent(2)] == ["late", "early"]
+
+
+def test_write_does_not_mutate_callers_experience():
+    from mimir.embeddings import Embedder
+
+    class TinyEmbedder(Embedder):
+        def embed(self, text):
+            return [1.0, 0.0]
+
+    m = Mimir(":memory:", embedder=TinyEmbedder())
+    try:
+        exp = Experience(task="fix login", action="add cache")
+        stored = m.write(exp)
+        assert exp.embedding is None  # caller's object left untouched
+        assert stored.embedding == [1.0, 0.0]  # returned copy carries the embedding
+        assert stored.id == exp.id
+    finally:
+        m.close()
+
+
 def test_rerecording_same_id_does_not_duplicate_in_search(memory):
     # Re-saving an edited experience under the same id must not leave a stale
     # FTS row (the bug the FTS dedup fix addresses).
