@@ -17,6 +17,11 @@ import sqlite3
 import threading
 from datetime import datetime
 
+try:
+    import sqlite_vec
+except ImportError:  # optional: the ANN index is the [vector] extra
+    sqlite_vec = None
+
 from ..clustering import ActionClusterer, Cluster, ExactClusterer, normalize_action
 from ..embeddings import cosine_similarity
 from ..models import Experience, Outcome
@@ -24,6 +29,9 @@ from .base import ActionStat, Storage
 
 TOKEN = re.compile(r"[a-z0-9]+")
 SIMPLE_KEY = re.compile(r"[A-Za-z0-9_]+")
+VEC_DIM = re.compile(r"float\[(\d+)\]")
+# Neighbours to over-fetch before filtering, since KNN can't filter inline.
+VEC_FILTER_OVERFETCH = 8
 
 # Common function words that add retrieval noise without signal.
 STOPWORDS = frozenset(
@@ -55,6 +63,8 @@ class SQLiteStorage(Storage):
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._vec_dim: int | None = None  # set once the ANN table exists
+        self._vec = self.load_vec()
         self._fts = self.init_schema()
 
     def init_schema(self) -> bool:
@@ -102,8 +112,64 @@ class SQLiteStorage(Storage):
                 )
             except sqlite3.OperationalError:
                 fts_ok = False  # FTS5 not compiled in — use the Python fallback
+            if self._vec:
+                # Reuse a prior index, else backfill one from existing rows.
+                self._vec_dim = self.detect_vec_dim()
+                if self._vec_dim is None:
+                    self.backfill_vec()
             self._conn.commit()
             return fts_ok
+
+    def load_vec(self) -> bool:
+        """Load sqlite-vec if installed and loadable; never raise. The ANN index
+        is a pure optimization, so failure just keeps the cosine fallback."""
+        if sqlite_vec is None:
+            return False
+        try:
+            self._conn.enable_load_extension(True)
+            sqlite_vec.load(self._conn)
+            self._conn.enable_load_extension(False)
+            return True
+        except (AttributeError, sqlite3.OperationalError):
+            return False
+
+    def detect_vec_dim(self) -> int | None:
+        """Recover the indexed dimension from an ANN table left by an earlier run."""
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'vec_experiences'"
+        ).fetchone()
+        if not row:
+            return None
+        match = VEC_DIM.search(row["sql"])
+        return int(match.group(1)) if match else None
+
+    def ensure_vec_table(self, dim: int) -> None:
+        # Created lazily: the dimension isn't known until the first embedding.
+        if self._vec_dim is not None:
+            return
+        self._conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_experiences "
+            f"USING vec0(experience_id TEXT PRIMARY KEY, embedding float[{dim}] "
+            "distance_metric=cosine)"
+        )
+        self._vec_dim = dim
+
+    def backfill_vec(self) -> None:
+        # Build the index from rows embedded before the extension was available.
+        rows = self._conn.execute(
+            "SELECT id, embedding FROM experiences WHERE embedding IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            vec = json.loads(row["embedding"])
+            if not vec:
+                continue
+            self.ensure_vec_table(len(vec))
+            if len(vec) != self._vec_dim:
+                continue  # mixed dimensions: keep the first, skip the rest
+            self._conn.execute(
+                "INSERT INTO vec_experiences(experience_id, embedding) VALUES (?, ?)",
+                (row["id"], sqlite_vec.serialize_float32([float(x) for x in vec])),
+            )
 
     def known_clusters(self) -> list[Cluster]:
         # Representative phrasing per cluster, for a clusterer to merge against.
@@ -141,6 +207,17 @@ class SQLiteStorage(Storage):
                     "INSERT INTO experiences_fts (id, task, action) VALUES (?, ?, ?)",
                     (exp.id, exp.task, exp.action),
                 )
+            if self._vec and exp.embedding is not None:
+                self.ensure_vec_table(len(exp.embedding))
+                if len(exp.embedding) == self._vec_dim:
+                    # Clear any prior row so a re-record replaces, not duplicates.
+                    self._conn.execute(
+                        "DELETE FROM vec_experiences WHERE experience_id = ?", (exp.id,)
+                    )
+                    self._conn.execute(
+                        "INSERT INTO vec_experiences(experience_id, embedding) VALUES (?, ?)",
+                        (exp.id, sqlite_vec.serialize_float32([float(x) for x in exp.embedding])),
+                    )
             self._conn.commit()
 
     def delete(self, experience_id: str) -> bool:
@@ -148,6 +225,10 @@ class SQLiteStorage(Storage):
             cur = self._conn.execute("DELETE FROM experiences WHERE id = ?", (experience_id,))
             if self._fts:
                 self._conn.execute("DELETE FROM experiences_fts WHERE id = ?", (experience_id,))
+            if self._vec and self._vec_dim is not None:
+                self._conn.execute(
+                    "DELETE FROM vec_experiences WHERE experience_id = ?", (experience_id,)
+                )
             self._conn.commit()
             return cur.rowcount > 0
 
@@ -309,8 +390,74 @@ class SQLiteStorage(Storage):
     ) -> list[tuple[Experience, float]]:
         if not embedding:
             return []
-        # Scan embedded rows and rank by cosine in Python. This is O(N) and the
-        # dependency-free fallback; a vector-index backend overrides the method.
+        if self._vec and self._vec_dim == len(embedding):
+            return self.vector_search_ann(embedding, k, outcome, context)
+        return self.vector_search_scan(embedding, k, outcome, context)
+
+    def vector_search_ann(
+        self,
+        embedding: list[float],
+        k: int | None,
+        outcome: str | None,
+        context: dict | None,
+    ) -> list[tuple[Experience, float]]:
+        # KNN can't filter inside the query, so over-fetch and filter after.
+        filters = context_sql_filters(context)
+        has_filter = outcome is not None or bool(context)
+        query = sqlite_vec.serialize_float32([float(x) for x in embedding])
+        with self._lock:
+            total = self._conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
+            if total == 0:
+                return []
+            if k is None:
+                pool = total
+            elif has_filter:
+                pool = min(total, max(k, k * VEC_FILTER_OVERFETCH))
+            else:
+                pool = min(total, k)
+            if pool < 1:
+                return []
+            neighbours = self._conn.execute(
+                "SELECT experience_id, distance FROM vec_experiences "
+                "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+                (query, pool),
+            ).fetchall()
+        distances = {row["experience_id"]: row["distance"] for row in neighbours}
+        if not distances:
+            return []
+
+        ids = list(distances)
+        where = [f"id IN ({','.join('?' * len(ids))})"]
+        params: list[object] = list(ids)
+        if outcome is not None:
+            where.append("outcome = ?")
+            params.append(outcome)
+        for path, value in filters:
+            where.append("json_extract(context, ?) = ?")
+            params += [path, value]
+        sql = "SELECT * FROM experiences WHERE " + " AND ".join(where)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+
+        scored = []
+        for row in rows:
+            exp = self.row_to_experience(row)
+            if context and not context_matches(exp.context, context):
+                continue
+            sim = 1.0 - distances[exp.id]  # cosine distance back to similarity
+            if sim > 0:
+                scored.append((exp, sim))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored[:k] if k is not None else scored
+
+    def vector_search_scan(
+        self,
+        embedding: list[float],
+        k: int | None,
+        outcome: str | None,
+        context: dict | None,
+    ) -> list[tuple[Experience, float]]:
+        # Dependency-free fallback: O(N) cosine in Python over embedded rows.
         filters = context_sql_filters(context)
         where = ["embedding IS NOT NULL"]
         params: list[object] = []

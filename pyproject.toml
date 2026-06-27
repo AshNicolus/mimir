@@ -28,6 +28,9 @@ dependencies = [
 dev = ["pytest>=8.0", "ruff>=0.5"]
 # Local semantic search (optional). Keyword recall works without this.
 embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
+# ANN vector index for fast semantic recall. Without it, recall falls back to
+# a dependency-free Python cosine scan over stored embeddings.
+vector = ["sqlite-vec>=0.1.6"]
 
 [project.urls]
 Homepage = "https://github.com/AshNicolus/mimir"
