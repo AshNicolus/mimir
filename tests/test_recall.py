@@ -117,6 +117,26 @@ def test_recall_filter_by_nested_context(memory):
     assert results[0].action == "add cache"
 
 
+def test_recall_hides_superseded_experience(memory):
+    old = memory.record("fix login latency", "add a write cache", outcome="failure")
+    new = memory.record("fix login latency", "add a read cache", outcome="success")
+    memory.supersede(old.id, new.id)
+
+    results = memory.recall("login latency", k=5)
+    ids = [e.id for e in results]
+    assert new.id in ids
+    assert old.id not in ids
+
+
+def test_recall_can_include_superseded(memory):
+    old = memory.record("fix login latency", "add a write cache")
+    new = memory.record("fix login latency", "add a read cache")
+    memory.supersede(old.id, new.id)
+
+    ids = [e.id for e in memory.recall("login latency", k=5, include_superseded=True)]
+    assert old.id in ids and new.id in ids
+
+
 def hydration_count(memory, query, k):
     """Count how many rows recall turns into Experience objects."""
     storage = memory._storage

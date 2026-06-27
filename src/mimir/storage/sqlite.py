@@ -313,6 +313,14 @@ class SQLiteStorage(Storage):
                 conn.execute("DELETE FROM vec_experiences WHERE experience_id = ?", (experience_id,))
             return cur.rowcount > 0
 
+    def set_superseded_by(self, experience_id: str, superseded_by: str | None) -> bool:
+        with self.writing() as conn:
+            cur = conn.execute(
+                "UPDATE experiences SET superseded_by = ? WHERE id = ?",
+                (superseded_by, experience_id),
+            )
+            return cur.rowcount > 0
+
     def get(self, experience_id: str) -> Experience | None:
         with self.reading() as conn:
             row = conn.execute(
@@ -334,10 +342,11 @@ class SQLiteStorage(Storage):
         with self.reading() as conn:
             return conn.execute("SELECT COUNT(*) FROM experiences").fetchone()[0]
 
-    def aggregate_actions(self, query: str) -> list[ActionStat]:
+    def aggregate_actions(self, query: str, include_superseded: bool = False) -> list[ActionStat]:
         terms = query_terms(query)
         if not terms:
             return []
+        live = "" if include_superseded else " AND e.superseded_by IS NULL"
 
         if self._fts:
             # Group and count in SQL: one row per action, not one per row. The
@@ -363,7 +372,7 @@ class SQLiteStorage(Storage):
                     "    SELECT e.action_norm AS key, e.action AS action, e.outcome AS outcome, "
                     "    max(-bm25(experiences_fts), 0.0) AS s "
                     "    FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
-                    "    WHERE experiences_fts MATCH ? "
+                    f"    WHERE experiences_fts MATCH ?{live} "
                     # LIMIT keeps SQLite from flattening this into the outer
                     # aggregate, where bm25() is not allowed to run.
                     "    LIMIT -1"
@@ -390,10 +399,11 @@ class SQLiteStorage(Storage):
         # No FTS5: group in Python over the lightweight columns. Relevance is
         # the fraction of query terms a row matches, same as fallback search.
         wanted = set(terms)
+        sql = "SELECT task, action, action_norm, outcome FROM experiences"
+        if not include_superseded:
+            sql += " WHERE superseded_by IS NULL"
         with self.reading() as conn:
-            rows = conn.execute(
-                "SELECT task, action, action_norm, outcome FROM experiences"
-            ).fetchall()
+            rows = conn.execute(sql).fetchall()
         groups: dict[str, dict] = {}
         for row in rows:
             matched = wanted & set(tokenize(f"{row['task']}\n{row['action']}"))
@@ -433,27 +443,30 @@ class SQLiteStorage(Storage):
             for key, g in groups.items()
         ]
 
-    def supporting_ids(self, query: str, action_key: str, limit: int = 100) -> list[str]:
+    def supporting_ids(
+        self, query: str, action_key: str, limit: int = 100, include_superseded: bool = False
+    ) -> list[str]:
         terms = query_terms(query)
         if not terms:
             return []
+        live = "" if include_superseded else " AND e.superseded_by IS NULL"
         if self._fts:
             match = " OR ".join(f'"{t}"' for t in terms)
             with self.reading() as conn:
                 rows = conn.execute(
                     "SELECT e.id FROM experiences_fts JOIN experiences e "
                     "ON e.id = experiences_fts.id "
-                    "WHERE experiences_fts MATCH ? AND e.action_norm = ? LIMIT ?",
+                    f"WHERE experiences_fts MATCH ? AND e.action_norm = ?{live} LIMIT ?",
                     (match, action_key, limit),
                 ).fetchall()
             return [row["id"] for row in rows]
 
         wanted = set(terms)
+        sql = "SELECT id, task, action, action_norm FROM experiences WHERE action_norm = ?"
+        if not include_superseded:
+            sql += " AND superseded_by IS NULL"
         with self.reading() as conn:
-            rows = conn.execute(
-                "SELECT id, task, action, action_norm FROM experiences WHERE action_norm = ?",
-                (action_key,),
-            ).fetchall()
+            rows = conn.execute(sql, (action_key,)).fetchall()
         ids = []
         for row in rows:
             if wanted & set(tokenize(f"{row['task']}\n{row['action']}")):
@@ -468,12 +481,13 @@ class SQLiteStorage(Storage):
         k: int | None = 5,
         outcome: str | None = None,
         context: dict | None = None,
+        include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
         if not embedding:
             return []
         if self._vec and self._vec_dim == len(embedding):
-            return self.vector_search_ann(embedding, k, outcome, context)
-        return self.vector_search_scan(embedding, k, outcome, context)
+            return self.vector_search_ann(embedding, k, outcome, context, include_superseded)
+        return self.vector_search_scan(embedding, k, outcome, context, include_superseded)
 
     def vector_search_ann(
         self,
@@ -481,6 +495,7 @@ class SQLiteStorage(Storage):
         k: int | None,
         outcome: str | None,
         context: dict | None,
+        include_superseded: bool,
     ) -> list[tuple[Experience, float]]:
         # KNN can't filter inside the query, so over-fetch and filter after.
         filters = context_sql_filters(context)
@@ -510,6 +525,8 @@ class SQLiteStorage(Storage):
         ids = list(distances)
         where = [f"id IN ({','.join('?' * len(ids))})"]
         params: list[object] = list(ids)
+        if not include_superseded:
+            where.append("superseded_by IS NULL")
         if outcome is not None:
             where.append("outcome = ?")
             params.append(outcome)
@@ -537,11 +554,14 @@ class SQLiteStorage(Storage):
         k: int | None,
         outcome: str | None,
         context: dict | None,
+        include_superseded: bool,
     ) -> list[tuple[Experience, float]]:
         # Dependency-free fallback: O(N) cosine in Python over embedded rows.
         filters = context_sql_filters(context)
         where = ["embedding IS NOT NULL"]
         params: list[object] = []
+        if not include_superseded:
+            where.append("superseded_by IS NULL")
         if outcome is not None:
             where.append("outcome = ?")
             params.append(outcome)
@@ -569,6 +589,7 @@ class SQLiteStorage(Storage):
         k: int | None = 5,
         outcome: str | None = None,
         context: dict | None = None,
+        include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
         # Push the outcome and any scalar context filters into SQL so we don't
         # hydrate the whole store on every recall. Only apply LIMIT when every
@@ -579,9 +600,9 @@ class SQLiteStorage(Storage):
         limit = k if k is not None and fully_pushed else None
 
         if self._fts:
-            scored = self.fts_search(query, outcome, filters, limit)
+            scored = self.fts_search(query, outcome, filters, limit, include_superseded)
         else:
-            scored = self.fallback_search(query, outcome, filters)
+            scored = self.fallback_search(query, outcome, filters, include_superseded)
 
         # Exact check for context values SQL can't compare (nested, missing).
         if context:
@@ -594,6 +615,7 @@ class SQLiteStorage(Storage):
         outcome: str | None,
         filters: list[tuple[str, object]],
         limit: int | None,
+        include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
         terms = query_terms(query)
         if not terms:
@@ -602,6 +624,8 @@ class SQLiteStorage(Storage):
 
         where = ["experiences_fts MATCH ?"]
         params: list[object] = [match]
+        if not include_superseded:
+            where.append("e.superseded_by IS NULL")
         if outcome is not None:
             where.append("e.outcome = ?")
             params.append(outcome)
@@ -628,6 +652,7 @@ class SQLiteStorage(Storage):
         query: str,
         outcome: str | None,
         filters: list[tuple[str, object]],
+        include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
         terms = set(query_terms(query))
         if not terms:
@@ -635,6 +660,8 @@ class SQLiteStorage(Storage):
 
         where = []
         params: list[object] = []
+        if not include_superseded:
+            where.append("superseded_by IS NULL")
         if outcome is not None:
             where.append("outcome = ?")
             params.append(outcome)

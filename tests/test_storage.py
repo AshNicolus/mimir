@@ -86,6 +86,29 @@ def test_recent_returns_newest_first(memory):
     assert recent[0].task == "third task"
 
 
+def test_supersede_marks_old_and_is_still_retrievable_by_id(memory):
+    old = memory.record("fix login", "add a write cache")
+    new = memory.record("fix login", "add a read cache")
+    assert memory.supersede(old.id, new.id) is True
+
+    # Direct id access still returns it, now carrying the supersession pointer.
+    fetched = memory.get(old.id)
+    assert fetched is not None
+    assert fetched.superseded_by == new.id
+
+
+def test_supersede_unknown_id_returns_false(memory):
+    assert memory.supersede("does-not-exist", "also-missing") is False
+
+
+def test_record_with_supersedes_links_in_one_call(memory):
+    old = memory.record("fix login", "add a write cache")
+    new = memory.record("fix login", "add a read cache", supersedes=old.id)
+
+    assert memory.get(old.id).superseded_by == new.id
+    assert [e.id for e in memory.recall("login", k=5)] == [new.id]
+
+
 def test_rerecording_same_id_does_not_duplicate_in_search(memory):
     # Re-saving an edited experience under the same id must not leave a stale
     # FTS row (the bug the FTS dedup fix addresses).

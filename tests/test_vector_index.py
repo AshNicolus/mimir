@@ -89,6 +89,18 @@ def test_ann_respects_outcome_filter():
         m.close()
 
 
+def test_ann_hides_superseded():
+    m = vec_memory()
+    try:
+        old = m.record("adopt a feline companion", "old shelter")
+        new = m.record("adopt a feline companion", "new shelter", supersedes=old.id)
+
+        ids = [e.id for e in m.recall("kitten")]
+        assert new.id in ids and old.id not in ids
+    finally:
+        m.close()
+
+
 def test_ann_respects_context_filter():
     m = vec_memory()
     try:

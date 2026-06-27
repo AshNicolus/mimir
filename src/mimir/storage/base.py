@@ -52,11 +52,13 @@ class Storage(ABC):
         k: int | None = 5,
         outcome: str | None = None,
         context: dict | None = None,
+        include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
         """Return up to ``k`` (experience, relevance_score) pairs, best first.
 
         ``relevance_score`` is in [0, 1]. ``outcome`` and ``context`` are
-        optional equality filters. ``k=None`` returns all matches.
+        optional equality filters. ``k=None`` returns all matches. Superseded
+        experiences are excluded unless ``include_superseded`` is True.
         """
 
     @abstractmethod
@@ -66,6 +68,7 @@ class Storage(ABC):
         k: int | None = 5,
         outcome: str | None = None,
         context: dict | None = None,
+        include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
         """Return up to ``k`` (experience, similarity) pairs by vector similarity
         to ``embedding``, best first, over experiences that have an embedding.
@@ -76,15 +79,23 @@ class Storage(ABC):
         """
 
     @abstractmethod
-    def aggregate_actions(self, query: str) -> list[ActionStat]:
+    def aggregate_actions(self, query: str, include_superseded: bool = False) -> list[ActionStat]:
         """Group all experiences matching ``query`` by normalized action and
         return outcome counts per action, so recommend() can rank without
-        hydrating every matching row."""
+        hydrating every matching row. Superseded experiences are excluded unless
+        ``include_superseded`` is True."""
 
     @abstractmethod
-    def supporting_ids(self, query: str, action_key: str, limit: int = 100) -> list[str]:
+    def supporting_ids(
+        self, query: str, action_key: str, limit: int = 100, include_superseded: bool = False
+    ) -> list[str]:
         """Return up to ``limit`` ids of experiences matching ``query`` whose
         normalized action equals ``action_key``."""
+
+    @abstractmethod
+    def set_superseded_by(self, experience_id: str, superseded_by: str | None) -> bool:
+        """Mark ``experience_id`` as superseded by another. Returns True if the
+        experience existed. Pass ``None`` to clear the mark."""
 
     @abstractmethod
     def delete(self, experience_id: str) -> bool:
