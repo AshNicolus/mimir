@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from mimir import Experience, Mimir, Outcome
+from mimir.embeddings import Embedder
 
 
 @pytest.fixture
@@ -39,6 +40,48 @@ def test_recall_finds_relevant_experience(memory):
 def test_recall_returns_nothing_for_unrelated_query(memory):
     memory.record("Fix authentication timeout", "Implemented Redis caching")
     assert memory.recall("how to bake sourdough bread") == []
+
+
+class TopicEmbedder(Embedder):
+    """Maps text to a topic vector by keyword, so synonyms with no shared words
+    still embed to the same vector."""
+
+    TOPICS = {
+        0: ("cat", "feline", "kitten"),
+        1: ("dog", "canine", "puppy"),
+    }
+
+    def embed(self, text):
+        t = text.lower()
+        vec = [0.0, 0.0, 1.0]  # default topic, distinct from the two below
+        for axis, words in self.TOPICS.items():
+            if any(w in t for w in words):
+                vec = [0.0, 0.0, 0.0]
+                vec[axis] = 1.0
+                break
+        return vec
+
+
+def test_recall_finds_semantic_match_without_keyword_overlap():
+    # The point of hybrid recall: an experience that shares no words with the
+    # query is still reachable when its meaning matches.
+    m = Mimir(":memory:", embedder=TopicEmbedder())
+    try:
+        m.record("adopt a feline companion", "visit the shelter", outcome="success")
+        m.record("buy a canine leash", "go to the pet store", outcome="success")
+
+        results = m.recall("kitten care tips")
+        assert results
+        assert results[0].task == "adopt a feline companion"
+    finally:
+        m.close()
+
+
+def test_recall_without_embeddings_misses_semantic_only_match(memory):
+    # Without an embedder, recall is keyword only, so the same query finds
+    # nothing. This is the gap hybrid recall closes.
+    memory.record("adopt a feline companion", "visit the shelter")
+    assert memory.recall("kitten care tips") == []
 
 
 def test_search_with_zero_limit_returns_empty(memory):
