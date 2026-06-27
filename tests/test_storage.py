@@ -1,11 +1,12 @@
 """Storage behaviour: validation, persistence, migration, indexes, concurrency."""
 
 import threading
+import warnings
 
 import pytest
 from pydantic import ValidationError
 
-from mimir import Experience, Mimir
+from mimir import Experience, Mimir, OutcomeScoreWarning
 
 
 def test_blank_task_or_action_is_rejected(memory):
@@ -29,6 +30,43 @@ def test_invalid_score_is_rejected(memory):
 def test_non_json_context_raises_clear_error(memory):
     with pytest.raises(ValueError, match="JSON-serializable"):
         memory.record("task", "action", context={"obj": object()})
+
+
+def test_failure_with_high_score_warns(memory):
+    with pytest.warns(OutcomeScoreWarning, match="failure"):
+        exp = memory.record("deploy", "force push", outcome="failure", score=1.0)
+    assert exp.score == 1.0  # still recorded, not clamped
+
+
+def test_success_with_low_score_warns(memory):
+    with pytest.warns(OutcomeScoreWarning, match="success"):
+        memory.record("fix login", "add cache", outcome="success", score=0.1)
+
+
+def test_consistent_outcome_and_score_do_not_warn(memory):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", OutcomeScoreWarning)
+        memory.record("fix login", "add cache", outcome="success", score=0.9)
+        memory.record_failure("deploy", "force push")  # defaults score to 0.0
+        memory.record("tune gc", "raise heap", outcome="partial", score=1.0)  # partial never warns
+
+
+def test_contradiction_can_be_escalated_to_error(memory):
+    # Callers who want a hard guarantee can turn the warning into an exception.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", OutcomeScoreWarning)
+        with pytest.raises(OutcomeScoreWarning):
+            memory.record("deploy", "force push", outcome="failure", score=1.0)
+
+
+def test_recall_of_contradictory_record_does_not_rewarn(memory):
+    with pytest.warns(OutcomeScoreWarning):
+        memory.record("deploy fails", "force push", outcome="failure", score=1.0)
+    # Reading it back must not re-emit the warning for already-stored data.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", OutcomeScoreWarning)
+        results = memory.recall("deploy", k=5)
+        assert results and results[0].score == 1.0
 
 
 def test_get_and_delete(memory):
