@@ -159,19 +159,83 @@ def test_outcome_index_is_not_created(memory):
     assert "idx_experiences_outcome" not in index_names(memory)
 
 
-def test_outcome_index_is_dropped_on_reopen(tmp_path):
-    # A database created before this change should shed the stale index too.
+def user_version(memory):
+    return memory._storage._conn.execute("PRAGMA user_version").fetchone()[0]
+
+
+def test_fresh_db_is_stamped_at_latest_version(memory):
+    from mimir.storage.sqlite import SCHEMA_VERSION
+
+    assert user_version(memory) == SCHEMA_VERSION
+
+
+def test_outcome_index_dropped_on_upgrade(tmp_path):
+    # v(N-1) -> vN: a database one version behind, still carrying the stale
+    # index, sheds it and lands at the latest version when reopened.
+    from mimir.storage.sqlite import SCHEMA_VERSION
+
     db = str(tmp_path / "mimir.db")
     seed = Mimir(db_path=db)
-    seed._storage._conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome)"
-    )
-    seed._storage._conn.commit()
+    conn = seed._storage._conn
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome)")
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+    conn.commit()
     seed.close()
 
     reopened = Mimir(db_path=db)
     try:
         assert "idx_experiences_outcome" not in index_names(reopened)
+        assert user_version(reopened) == SCHEMA_VERSION
+    finally:
+        reopened.close()
+
+
+def test_legacy_db_at_version_zero_fully_upgrades(tmp_path):
+    # A pre-versioning database (user_version 0, no action_norm column) runs
+    # every migration in order and ends at the latest version.
+    import sqlite3
+
+    from mimir.storage.sqlite import SCHEMA_VERSION
+
+    db = str(tmp_path / "legacy.db")
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE experiences (id TEXT PRIMARY KEY, task TEXT NOT NULL, "
+        "action TEXT NOT NULL, outcome TEXT NOT NULL, score REAL NOT NULL, "
+        "context TEXT NOT NULL, embedding TEXT, created_at TEXT NOT NULL, superseded_by TEXT)"
+    )
+    con.execute("CREATE INDEX idx_experiences_outcome ON experiences(outcome)")
+    con.execute(
+        "INSERT INTO experiences VALUES (?,?,?,?,?,?,?,?,?)",
+        ("1", "auth is slow", "Redis caching", "success", 1.0, "{}", None, "2026-01-01", None),
+    )
+    con.commit()
+    con.close()
+
+    m = Mimir(db_path=db)
+    try:
+        assert user_version(m) == SCHEMA_VERSION
+        columns = {r["name"] for r in m._storage._conn.execute("PRAGMA table_info(experiences)")}
+        assert "action_norm" in columns
+        assert "idx_experiences_outcome" not in index_names(m)
+        # The action_norm migration backfilled the normalized grouping key.
+        row = m._storage._conn.execute(
+            "SELECT action_norm FROM experiences WHERE id = '1'"
+        ).fetchone()
+        assert row["action_norm"] == "redis caching"
+    finally:
+        m.close()
+
+
+def test_current_db_is_not_remigrated(tmp_path):
+    # Reopening an up-to-date database leaves its version untouched.
+    from mimir.storage.sqlite import SCHEMA_VERSION
+
+    db = str(tmp_path / "mimir.db")
+    Mimir(db_path=db).close()
+    reopened = Mimir(db_path=db)
+    try:
+        assert user_version(reopened) == SCHEMA_VERSION
     finally:
         reopened.close()
 

@@ -50,6 +50,57 @@ def query_terms(query: str) -> list[str]:
     return meaningful or terms  # fall back if the query is all stopwords
 
 
+# Forward-only schema migrations, applied in order. Each must be idempotent:
+# released databases predate user_version and all report 0, so every step has
+# to be safe to re-run on a database that already has the modern shape.
+def migrate_base_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS experiences (
+            id            TEXT PRIMARY KEY,
+            task          TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            action_norm   TEXT,
+            outcome       TEXT NOT NULL,
+            score         REAL NOT NULL,
+            context       TEXT NOT NULL,
+            embedding     TEXT,
+            created_at    TEXT NOT NULL,
+            superseded_by TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_experiences_created ON experiences(created_at)"
+    )
+
+
+def migrate_action_norm(conn: sqlite3.Connection) -> None:
+    # Add and backfill action_norm for databases created before the column.
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(experiences)")}
+    if "action_norm" in columns:
+        return
+    conn.execute("ALTER TABLE experiences ADD COLUMN action_norm TEXT")
+    stale = conn.execute("SELECT id, action FROM experiences").fetchall()
+    conn.executemany(
+        "UPDATE experiences SET action_norm = ? WHERE id = ?",
+        [(normalize_action(r["action"]), r["id"]) for r in stale],
+    )
+
+
+def migrate_drop_outcome_index(conn: sqlite3.Connection) -> None:
+    # Unused: FTS recall joins by primary key and filters outcome as a residual.
+    conn.execute("DROP INDEX IF EXISTS idx_experiences_outcome")
+
+
+MIGRATIONS = [
+    migrate_base_schema,
+    migrate_action_norm,
+    migrate_drop_outcome_index,
+]
+SCHEMA_VERSION = len(MIGRATIONS)
+
+
 class SQLiteStorage(Storage):
     def __init__(
         self, db_path: str = ":memory:", *, clusterer: ActionClusterer | None = None
@@ -73,45 +124,8 @@ class SQLiteStorage(Storage):
             # the standard safe-and-fast pairing with WAL.
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS experiences (
-                    id            TEXT PRIMARY KEY,
-                    task          TEXT NOT NULL,
-                    action        TEXT NOT NULL,
-                    action_norm   TEXT,
-                    outcome       TEXT NOT NULL,
-                    score         REAL NOT NULL,
-                    context       TEXT NOT NULL,
-                    embedding     TEXT,
-                    created_at    TEXT NOT NULL,
-                    superseded_by TEXT
-                )
-                """
-            )
-            # Backfill action_norm for databases created before this column.
-            columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(experiences)")}
-            if "action_norm" not in columns:
-                self._conn.execute("ALTER TABLE experiences ADD COLUMN action_norm TEXT")
-                stale = self._conn.execute("SELECT id, action FROM experiences").fetchall()
-                self._conn.executemany(
-                    "UPDATE experiences SET action_norm = ? WHERE id = ?",
-                    [(normalize_action(r["action"]), r["id"]) for r in stale],
-                )
-            # The outcome index is unused: FTS recall joins by primary key and
-            # filters outcome as a residual. Drop it, including on older dbs.
-            self._conn.execute("DROP INDEX IF EXISTS idx_experiences_outcome")
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_experiences_created ON experiences(created_at)"
-            )
-            fts_ok = True
-            try:
-                self._conn.execute(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts "
-                    "USING fts5(id UNINDEXED, task, action)"
-                )
-            except sqlite3.OperationalError:
-                fts_ok = False  # FTS5 not compiled in — use the Python fallback
+            self.run_migrations()
+            fts_ok = self.init_fts()
             if self._vec:
                 # Reuse a prior index, else backfill one from existing rows.
                 self._vec_dim = self.detect_vec_dim()
@@ -119,6 +133,29 @@ class SQLiteStorage(Storage):
                     self.backfill_vec()
             self._conn.commit()
             return fts_ok
+
+    def run_migrations(self) -> None:
+        """Apply pending migrations, stamping user_version after each so an
+        interrupted upgrade resumes where it left off."""
+        version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        for target, migrate in enumerate(MIGRATIONS, start=1):
+            if version >= target:
+                continue
+            migrate(self._conn)
+            self._conn.execute(f"PRAGMA user_version = {target}")
+            self._conn.commit()
+
+    def init_fts(self) -> bool:
+        # FTS lives outside the version gate: whether it exists depends on the
+        # build (FTS5 compiled in), not the schema version.
+        try:
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts "
+                "USING fts5(id UNINDEXED, task, action)"
+            )
+            return True
+        except sqlite3.OperationalError:
+            return False
 
     def load_vec(self) -> bool:
         """Load sqlite-vec if installed and loadable; never raise. The ANN index
