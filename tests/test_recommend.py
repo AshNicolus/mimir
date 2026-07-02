@@ -20,7 +20,6 @@ def test_recommend_prefers_more_proven_action(memory):
 
 
 def test_recommend_counts_full_population_not_a_sample(memory):
-    # Regression: counts used to cap at k=20; must reflect the real total.
     for _ in range(30):
         memory.record("auth is slow", "Redis caching", outcome="success")
 
@@ -36,8 +35,7 @@ def test_recommend_returns_none_without_data(memory):
 
 
 def test_recommend_caps_supporting_ids(memory):
-    # supporting_ids is a bounded sample, even when many experiences match,
-    # while the counts stay exact over the whole population.
+    # supporting_ids is a bounded sample; the counts stay exact.
     for _ in range(250):
         memory.record("auth is slow", "Redis caching", outcome="success")
 
@@ -49,8 +47,7 @@ def test_recommend_caps_supporting_ids(memory):
 
 
 def test_recommend_prefers_more_relevant_action(memory):
-    # Two actions with identical track records (5/5 success each). The one whose
-    # supporting experiences are more relevant to the query should rank higher.
+    # Identical track records; the more relevant evidence should rank higher.
     for _ in range(5):
         memory.record("fix authentication login latency", "add a read cache", outcome="success")
     for _ in range(5):
@@ -62,8 +59,6 @@ def test_recommend_prefers_more_relevant_action(memory):
 
 
 def test_relevance_weighting_is_ablatable(memory):
-    # The ablation hook must actually change the estimator: weighting on vs off
-    # produces different confidence for the same action.
     for _ in range(5):
         memory.record("authentication note", "rewrite the query", outcome="success")
 
@@ -75,8 +70,6 @@ def test_relevance_weighting_is_ablatable(memory):
 
 
 def test_default_clusterer_keeps_phrasings_separate(memory):
-    # The cheap default clusters by exact text, so differently worded phrasings
-    # of the same strategy do not merge.
     memory.record("auth is slow", "Added Redis cache", outcome="success")
     memory.record("auth is slow", "use redis caching", outcome="success")
 
@@ -86,8 +79,6 @@ def test_default_clusterer_keeps_phrasings_separate(memory):
 
 
 def test_custom_clusterer_merges_equivalent_actions():
-    # A swappable clusterer collapses semantically equivalent but textually
-    # different actions into one recommendation with summed counts.
     from mimir.clustering import ActionClusterer, normalize_action
 
     class RedisClusterer(ActionClusterer):
@@ -110,8 +101,6 @@ def test_custom_clusterer_merges_equivalent_actions():
 
 
 def test_embedding_clusterer_merges_similar_actions():
-    # The shipped embedding backend merges actions whose vectors are close and
-    # keeps unrelated ones apart.
     from mimir.clustering import EmbeddingClusterer
     from mimir.embeddings import Embedder
 
@@ -126,7 +115,7 @@ def test_embedding_clusterer_merges_similar_actions():
         m.record("auth is slow", "use redis caching", outcome="success")
         m.record("auth is slow", "rewrite in rust", outcome="success")
 
-        stats = m._storage.aggregate_actions("auth is slow")
+        stats = m.storage.aggregate_actions("auth is slow")
         keys = {s.key for s in stats}
         assert len(keys) == 2  # the two redis phrasings collapsed into one cluster
         redis = max(stats, key=lambda s: s.total)
@@ -136,8 +125,7 @@ def test_embedding_clusterer_merges_similar_actions():
 
 
 def test_recommend_groups_actions_instead_of_scanning_every_row():
-    # recommend aggregates in the backend, so the work it pulls back is bounded
-    # by the number of distinct actions, not the size of the store.
+    # The rows pulled back are bounded by distinct actions, not store size.
     actions = ["add a cache", "add an index", "rewrite the query"]
     small, big = Mimir(":memory:"), Mimir(":memory:")
     try:
@@ -146,8 +134,8 @@ def test_recommend_groups_actions_instead_of_scanning_every_row():
         for i in range(1200):
             big.record(f"slow service {i}", actions[i % len(actions)], outcome="success")
 
-        small_stats = small._storage.aggregate_actions("slow service")
-        big_stats = big._storage.aggregate_actions("slow service")
+        small_stats = small.storage.aggregate_actions("slow service")
+        big_stats = big.storage.aggregate_actions("slow service")
         assert len(small_stats) == len(big_stats) == len(actions)
 
         # Counts stay exact across the full population (1200 / 3 actions).
@@ -182,8 +170,6 @@ def test_recommendation_str_is_readable(memory):
 
 
 def test_recommend_excludes_superseded_from_counts(memory):
-    # An older strategy, even with a winning record, drops out of recommend once
-    # superseded; its outcomes no longer count toward any action.
     old = memory.record("auth is slow", "Redis caching", outcome="success")
     memory.record("auth is slow", "rewrite the query", outcome="success")
     memory.supersede(old.id, memory.record("auth is slow", "rewrite the query").id)
@@ -195,8 +181,7 @@ def test_recommend_excludes_superseded_from_counts(memory):
 
 
 def test_recommend_can_include_superseded(memory):
-    # Same action on both, so the superseded one and its replacement group
-    # together: by default only the replacement counts, but opting in counts both.
+    # Same action on both, so the pair groups together when superseded rows count.
     old = memory.record("auth is slow", "Redis caching", outcome="success")
     new = memory.record("auth is slow", "Redis caching", outcome="success")
     memory.supersede(old.id, new.id)

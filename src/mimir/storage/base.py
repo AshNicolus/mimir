@@ -1,9 +1,4 @@
-"""Storage interface — the seam that lets Mimir swap backends without a rewrite.
-
-v1 ships a SQLite implementation. A Postgres/pgvector backend (for concurrent
-multi-agent writes) and adapters for external memory stores can implement this
-same interface later.
-"""
+"""Storage interface: the seam that lets Mimir swap backends without a rewrite."""
 
 from __future__ import annotations
 
@@ -14,15 +9,10 @@ from ..models import Experience
 
 
 class ActionStat(NamedTuple):
-    """Outcome counts for one action across all experiences matching a query.
+    """Outcome counts for one action across the experiences matching a query.
 
-    The grouping (by normalized action) and counting happen in the backend so
-    recommend() never has to hydrate the whole matching population.
-
-    The raw counts (success/failure/partial/total) are exact integers for
-    reporting. The weighted_* fields sum each experience's relevance to the
-    query instead of counting it as 1, so recommend() can rank on how relevant
-    the supporting evidence is, not just its success rate.
+    Raw counts are exact integers for reporting; the weighted fields sum each
+    experience's relevance to the query instead of counting it as 1.
     """
 
     action: str  # a representative phrasing of the action
@@ -54,12 +44,8 @@ class Storage(ABC):
         context: dict | None = None,
         include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
-        """Return up to ``k`` (experience, relevance_score) pairs, best first.
-
-        ``relevance_score`` is in [0, 1]. ``outcome`` and ``context`` are
-        optional equality filters. ``k=None`` returns all matches. Superseded
-        experiences are excluded unless ``include_superseded`` is True.
-        """
+        """Return up to k (experience, relevance) pairs, best first, relevance
+        in [0, 1]. k=None returns all matches."""
 
     @abstractmethod
     def vector_search(
@@ -70,40 +56,31 @@ class Storage(ABC):
         context: dict | None = None,
         include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
-        """Return up to ``k`` (experience, similarity) pairs by vector similarity
-        to ``embedding``, best first, over experiences that have an embedding.
-
-        This is the vector half of hybrid recall. The SQLite backend computes
-        cosine in Python (no dependency); a real vector-index backend overrides
-        this method. ``outcome`` and ``context`` filter as in ``search``.
-        """
+        """Return up to k (experience, similarity) pairs by vector similarity,
+        best first, over experiences that have an embedding."""
 
     @abstractmethod
     def aggregate_actions(self, query: str, include_superseded: bool = False) -> list[ActionStat]:
-        """Group all experiences matching ``query`` by normalized action and
-        return outcome counts per action, so recommend() can rank without
-        hydrating every matching row. Superseded experiences are excluded unless
-        ``include_superseded`` is True."""
+        """Group experiences matching the query by normalized action and return
+        per-action outcome counts, without hydrating every row."""
 
     @abstractmethod
     def supporting_ids(
         self, query: str, action_key: str, limit: int = 100, include_superseded: bool = False
     ) -> list[str]:
-        """Return up to ``limit`` ids of experiences matching ``query`` whose
-        normalized action equals ``action_key``."""
+        """Return up to limit ids of matching experiences with this action key."""
 
     @abstractmethod
     def set_superseded_by(self, experience_id: str, superseded_by: str | None) -> bool:
-        """Mark ``experience_id`` as superseded by another. Returns True if the
-        experience existed. Pass ``None`` to clear the mark."""
+        """Mark an experience as superseded (None clears it). True if it existed."""
 
     @abstractmethod
     def delete(self, experience_id: str) -> bool:
-        """Remove one experience. Returns True if it existed."""
+        """Remove one experience. True if it existed."""
 
     @abstractmethod
     def recent(self, n: int = 10) -> list[Experience]:
-        """Return the ``n`` most recently recorded experiences, newest first."""
+        """Return the n most recent experiences, newest first."""
 
     @abstractmethod
     def count(self) -> int:
@@ -111,4 +88,4 @@ class Storage(ABC):
 
     @abstractmethod
     def close(self) -> None:
-        """Release any underlying resources."""
+        """Release underlying resources."""

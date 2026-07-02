@@ -34,7 +34,7 @@ class TopicEmbedder(Embedder):
 def vec_memory(**kwargs):
     """A Mimir whose store actually loaded the ANN index, or skip."""
     m = Mimir(":memory:", embedder=TopicEmbedder(), **kwargs)
-    if not m._storage._vec:
+    if not m.storage.vec_enabled:
         m.close()
         pytest.skip("sqlite-vec not available; covered by the cosine fallback")
     return m
@@ -44,8 +44,8 @@ def test_ann_index_is_used_when_available():
     m = vec_memory()
     try:
         m.record("adopt a feline companion", "visit the shelter", outcome="success")
-        assert m._storage._vec_dim == 3
-        count = m._storage._conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
+        assert m.storage.vec_dim == 3
+        count = m.storage.conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
         assert count == 1
     finally:
         m.close()
@@ -70,7 +70,7 @@ def test_ann_vector_search_ranks_by_similarity():
         m.record("adopt a feline companion", "visit the shelter")
         m.record("buy a canine leash", "go to the pet store")
 
-        hits = m._storage.vector_search(TopicEmbedder().embed("kitten"), k=2)
+        hits = m.storage.vector_search(TopicEmbedder().embed("kitten"), k=2)
         assert [e.task for e, _ in hits][0] == "adopt a feline companion"
         assert all(0.0 < score <= 1.0 for _, score in hits)
     finally:
@@ -118,7 +118,7 @@ def test_ann_dropped_on_delete():
     try:
         exp = m.record("adopt a feline companion", "visit the shelter")
         assert m.delete(exp.id) is True
-        count = m._storage._conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
+        count = m.storage.conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
         assert count == 0
         assert m.recall("kitten") == []
     finally:
@@ -132,7 +132,7 @@ def test_ann_rerecord_does_not_duplicate():
         exp.action = "second attempt"
         m.write(exp)
 
-        count = m._storage._conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
+        count = m.storage.conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
         assert count == 1
         results = m.recall("kitten")
         assert len(results) == 1
@@ -146,19 +146,19 @@ def test_ann_backfills_existing_json_embeddings(tmp_path):
     # still answer semantic recall.
     db = str(tmp_path / "vec.db")
     first = Mimir(db, embedder=TopicEmbedder())
-    if not first._storage._vec:
+    if not first.storage.vec_enabled:
         first.close()
         pytest.skip("sqlite-vec not available")
     first.record("adopt a feline companion", "visit the shelter")
     # Drop the index but keep the JSON embeddings, simulating a pre-extension db.
-    first._storage._conn.execute("DROP TABLE vec_experiences")
-    first._storage._conn.commit()
+    first.storage.conn.execute("DROP TABLE vec_experiences")
+    first.storage.conn.commit()
     first.close()
 
     reopened = Mimir(db, embedder=TopicEmbedder())
     try:
-        assert reopened._storage._vec_dim == 3
-        count = reopened._storage._conn.execute(
+        assert reopened.storage.vec_dim == 3
+        count = reopened.storage.conn.execute(
             "SELECT COUNT(*) FROM vec_experiences"
         ).fetchone()[0]
         assert count == 1
