@@ -1,9 +1,5 @@
-"""Embedding provider seam.
-
-The default is a no-op: recall works on keywords alone, so v1 has no heavy
-dependencies and no API cost. Plug in a real embedder (local or API-backed) to
-enable semantic recall — it just needs to implement ``Embedder``.
-"""
+"""Embedding provider seam. The default is a no-op, so v1 needs no heavy
+dependencies; plug in any Embedder to enable semantic recall."""
 
 from __future__ import annotations
 
@@ -16,11 +12,11 @@ class Embedder(ABC):
 
     @abstractmethod
     def embed(self, text: str) -> list[float]:
-        """Return a vector for ``text``."""
+        """Return a vector for the text."""
 
 
 class NullEmbedder(Embedder):
-    """Does nothing. Recall falls back to keyword search."""
+    """Does nothing; recall stays keyword-only."""
 
     enabled = False
 

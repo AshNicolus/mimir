@@ -1,8 +1,4 @@
-"""Core data models for Mimir.
-
-The whole point of Mimir is that it stores *experiences* (problem -> action ->
-outcome), not documents. These models are that contract.
-"""
+"""Core data models: Mimir stores experiences (task, action, outcome), not documents."""
 
 from __future__ import annotations
 
@@ -27,18 +23,13 @@ class OutcomeScoreWarning(UserWarning):
 
 
 class Outcome(str, Enum):
-    """How an attempt turned out."""
-
     SUCCESS = "success"
     FAILURE = "failure"
     PARTIAL = "partial"
 
 
 class Experience(BaseModel):
-    """A single recorded experience: what was attempted and how it went.
-
-    This is the atomic unit Mimir stores and learns from.
-    """
+    """A single recorded experience: what was attempted and how it went."""
 
     id: str = Field(default_factory=new_id)
     task: str  # the problem being solved
@@ -61,18 +52,14 @@ class Experience(BaseModel):
     @field_validator("created_at")
     @classmethod
     def as_utc(cls, value: datetime) -> datetime:
-        # Storage sorts on the ISO string, so all timestamps must share one zone
-        # for lexicographic order to match chronological order. Normalize to UTC,
-        # treating a naive datetime as already UTC.
+        # Storage sorts on the ISO string, so timestamps must share one zone.
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
     @model_validator(mode="after")
     def warn_if_score_contradicts_outcome(self) -> Experience:
-        # score is coupled to outcome. A clear contradiction is allowed (the
-        # record still lands) but warned, so callers can spot or escalate it.
-        # Partial sits in the middle, so any score is plausible there.
+        # Contradictions are allowed but warned, so callers can spot or escalate them.
         if self.outcome is Outcome.SUCCESS and self.score < 0.5:
             mismatch = "a success scored below 0.5"
         elif self.outcome is Outcome.FAILURE and self.score > 0.5:
@@ -93,13 +80,9 @@ class Experience(BaseModel):
 
 
 class Recommendation(BaseModel):
-    """A strategy suggested for a new task, derived from past experiences.
+    """A strategy suggested for a new task, aggregated from past experiences."""
 
-    In v1 this is computed on the fly by aggregating recalled experiences
-    (no LLM). Later phases will materialize these as first-class Strategy rows.
-    """
-
-    task: str  # the query this recommendation answers
+    task: str
     recommended_action: str
     confidence: float = Field(ge=0.0, le=1.0)
     success_count: int = 0
@@ -112,7 +95,7 @@ class Recommendation(BaseModel):
     def total(self) -> int:
         return self.success_count + self.failure_count + self.partial_count
 
-    def __str__(self) -> str:  # nice console output, as shown in the README
+    def __str__(self) -> str:
         return (
             f"Recommended strategy: {self.recommended_action!r}\n"
             f"  confidence: {self.confidence:.2f}\n"

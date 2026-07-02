@@ -52,7 +52,6 @@ def test_consistent_outcome_and_score_do_not_warn(memory):
 
 
 def test_contradiction_can_be_escalated_to_error(memory):
-    # Callers who want a hard guarantee can turn the warning into an exception.
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutcomeScoreWarning)
         with pytest.raises(OutcomeScoreWarning):
@@ -62,7 +61,6 @@ def test_contradiction_can_be_escalated_to_error(memory):
 def test_recall_of_contradictory_record_does_not_rewarn(memory):
     with pytest.warns(OutcomeScoreWarning):
         memory.record("deploy fails", "force push", outcome="failure", score=1.0)
-    # Reading it back must not re-emit the warning for already-stored data.
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutcomeScoreWarning)
         results = memory.recall("deploy", k=5)
@@ -91,7 +89,6 @@ def test_supersede_marks_old_and_is_still_retrievable_by_id(memory):
     new = memory.record("fix login", "add a read cache")
     assert memory.supersede(old.id, new.id) is True
 
-    # Direct id access still returns it, now carrying the supersession pointer.
     fetched = memory.get(old.id)
     assert fetched is not None
     assert fetched.superseded_by == new.id
@@ -121,9 +118,7 @@ def test_created_at_is_normalized_to_utc():
 
 
 def test_recent_orders_by_utc_instant_across_timezones(memory):
-    # The early record's local wall clock (11:00 +05:30) looks later as a string
-    # than the late one (09:00 UTC), but in real time it is earlier. Ordering
-    # must follow the true UTC instant, not the raw local string.
+    # 11:00 +05:30 reads later than 09:00 UTC as a string but is earlier in real time.
     from datetime import datetime, timedelta, timezone
 
     ist = timezone(timedelta(hours=5, minutes=30))
@@ -154,8 +149,6 @@ def test_write_does_not_mutate_callers_experience():
 
 
 def test_rerecording_same_id_does_not_duplicate_in_search(memory):
-    # Re-saving an edited experience under the same id must not leave a stale
-    # FTS row (the bug the FTS dedup fix addresses).
     exp = Experience(task="fix login latency", action="first attempt")
     memory.write(exp)
     exp.action = "second attempt"
@@ -215,8 +208,6 @@ def run_threads(target, n):
 
 
 def test_concurrent_writes_on_file_db_are_safe(tmp_path):
-    # The file path serializes writers across their own connections, so no
-    # update is lost even though reads no longer share one global lock.
     m = Mimir(db_path=str(tmp_path / "m.db"))
     try:
         run_threads(lambda n: [m.record(f"task {n}-{i}", f"action {n}-{i}") for i in range(20)], 5)
@@ -226,8 +217,6 @@ def test_concurrent_writes_on_file_db_are_safe(tmp_path):
 
 
 def test_concurrent_reads_on_file_db_are_consistent(tmp_path):
-    # Many readers hitting the store at once must each get correct results and
-    # raise nothing, even while a writer is active.
     m = Mimir(db_path=str(tmp_path / "m.db"))
     for i in range(200):
         m.record(f"fix latency in service {i}", "add cache", outcome="success")
@@ -249,31 +238,27 @@ def test_concurrent_reads_on_file_db_are_consistent(tmp_path):
 
 
 def test_file_db_opens_a_connection_per_reader_thread(tmp_path):
-    # File mode gives each reader thread its own connection (the basis for
-    # concurrent reads); close() then disposes of all of them.
     m = Mimir(db_path=str(tmp_path / "m.db"))
     m.record("task", "action")
-    storage = m._storage
-    assert not storage._shared
+    storage = m.storage
+    assert not storage.shared
 
     run_threads(lambda _: m.recall("task"), 4)
-    assert len(storage._connections) >= 5  # one writer plus a reader per thread
+    assert len(storage.connections) >= 5  # one writer plus a reader per thread
 
     m.close()
-    assert storage._connections == []
+    assert storage.connections == []
 
 
 def test_memory_db_stays_single_connection(memory):
-    # In-memory databases can't share data across connections, so they keep the
-    # single-connection model regardless of how many threads read.
-    assert memory._storage._shared
+    # In-memory databases can't share data across connections.
+    assert memory.storage.shared
     run_threads(lambda _: memory.recall("anything"), 4)
-    assert len(memory._storage._connections) == 1
+    assert len(memory.storage.connections) == 1
 
 
 def test_recommend_works_on_database_without_action_norm(tmp_path):
-    # A database written before the action_norm column existed must be migrated
-    # and backfilled on open so recommend() still groups correctly.
+    # A pre-action_norm database must be migrated and backfilled on open.
     import sqlite3
 
     db = str(tmp_path / "legacy.db")
@@ -317,36 +302,33 @@ def test_recommend_works_on_database_without_action_norm(tmp_path):
 
 
 def index_names(memory):
-    rows = memory._storage._conn.execute(
+    rows = memory.storage.conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index'"
     ).fetchall()
     return {row["name"] for row in rows}
 
 
 def test_outcome_index_is_not_created(memory):
-    # The outcome index is never used for reads (FTS recall joins by primary key
-    # and filters outcome as a residual), so it must not exist.
     assert "idx_experiences_outcome" not in index_names(memory)
 
 
 def user_version(memory):
-    return memory._storage._conn.execute("PRAGMA user_version").fetchone()[0]
+    return memory.storage.conn.execute("PRAGMA user_version").fetchone()[0]
 
 
 def test_fresh_db_is_stamped_at_latest_version(memory):
-    from mimir.storage.sqlite import SCHEMA_VERSION
+    from mimir.storage.migrations import SCHEMA_VERSION
 
     assert user_version(memory) == SCHEMA_VERSION
 
 
 def test_outcome_index_dropped_on_upgrade(tmp_path):
-    # v(N-1) -> vN: a database one version behind, still carrying the stale
-    # index, sheds it and lands at the latest version when reopened.
-    from mimir.storage.sqlite import SCHEMA_VERSION
+    # A database one version behind sheds the stale index when reopened.
+    from mimir.storage.migrations import SCHEMA_VERSION
 
     db = str(tmp_path / "mimir.db")
     seed = Mimir(db_path=db)
-    conn = seed._storage._conn
+    conn = seed.storage.conn
     conn.execute("CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome)")
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
     conn.commit()
@@ -361,11 +343,9 @@ def test_outcome_index_dropped_on_upgrade(tmp_path):
 
 
 def test_legacy_db_at_version_zero_fully_upgrades(tmp_path):
-    # A pre-versioning database (user_version 0, no action_norm column) runs
-    # every migration in order and ends at the latest version.
     import sqlite3
 
-    from mimir.storage.sqlite import SCHEMA_VERSION
+    from mimir.storage.migrations import SCHEMA_VERSION
 
     db = str(tmp_path / "legacy.db")
     con = sqlite3.connect(db)
@@ -385,11 +365,10 @@ def test_legacy_db_at_version_zero_fully_upgrades(tmp_path):
     m = Mimir(db_path=db)
     try:
         assert user_version(m) == SCHEMA_VERSION
-        columns = {r["name"] for r in m._storage._conn.execute("PRAGMA table_info(experiences)")}
+        columns = {r["name"] for r in m.storage.conn.execute("PRAGMA table_info(experiences)")}
         assert "action_norm" in columns
         assert "idx_experiences_outcome" not in index_names(m)
-        # The action_norm migration backfilled the normalized grouping key.
-        row = m._storage._conn.execute(
+        row = m.storage.conn.execute(
             "SELECT action_norm FROM experiences WHERE id = '1'"
         ).fetchone()
         assert row["action_norm"] == "redis caching"
@@ -398,8 +377,7 @@ def test_legacy_db_at_version_zero_fully_upgrades(tmp_path):
 
 
 def test_current_db_is_not_remigrated(tmp_path):
-    # Reopening an up-to-date database leaves its version untouched.
-    from mimir.storage.sqlite import SCHEMA_VERSION
+    from mimir.storage.migrations import SCHEMA_VERSION
 
     db = str(tmp_path / "mimir.db")
     Mimir(db_path=db).close()

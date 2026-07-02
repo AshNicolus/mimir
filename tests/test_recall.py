@@ -53,8 +53,6 @@ class TopicEmbedder(Embedder):
 
 
 def test_recall_finds_semantic_match_without_keyword_overlap():
-    # The point of hybrid recall: an experience that shares no words with the
-    # query is still reachable when its meaning matches.
     m = Mimir(":memory:", embedder=TopicEmbedder())
     try:
         m.record("adopt a feline companion", "visit the shelter", outcome="success")
@@ -68,15 +66,13 @@ def test_recall_finds_semantic_match_without_keyword_overlap():
 
 
 def test_recall_without_embeddings_misses_semantic_only_match(memory):
-    # Without an embedder, recall is keyword only, so the same query finds
-    # nothing. This is the gap hybrid recall closes.
     memory.record("adopt a feline companion", "visit the shelter")
     assert memory.recall("kitten care tips") == []
 
 
 def test_search_with_zero_limit_returns_empty(memory):
     memory.record("a task", "an action")
-    assert memory._storage.search("task", k=0) == []
+    assert memory.storage.search("task", k=0) == []
 
 
 def test_recall_ignores_common_stopwords(memory):
@@ -108,7 +104,7 @@ def test_recall_filter_by_context(memory):
 
 
 def test_recall_filter_by_nested_context(memory):
-    # Context values SQL can't compare must still filter correctly in Python.
+    # Values SQL can't compare still have to filter correctly, in Python.
     memory.record("speed up api", "add cache", context={"tags": ["auth", "cache"]})
     memory.record("speed up api", "add index", context={"tags": ["billing"]})
 
@@ -139,7 +135,7 @@ def test_recall_can_include_superseded(memory):
 
 def hydration_count(memory, query, k):
     """Count how many rows recall turns into Experience objects."""
-    storage = memory._storage
+    storage = memory.storage
     original = storage.row_to_experience
     calls = 0
 
@@ -157,10 +153,9 @@ def hydration_count(memory, query, k):
 
 
 def test_recall_does_not_scale_with_store_size():
-    # Recall must bound how many rows it hydrates, so latency stays flat as the
-    # store grows instead of going O(N) per call.
+    # Recall must bound how many rows it hydrates as the store grows.
     small, big = Mimir(":memory:"), Mimir(":memory:")
-    if not small._storage._fts:
+    if not small.storage.fts_enabled:
         small.close()
         big.close()
         pytest.skip("FTS5 not available; fallback search scans the full table")
