@@ -70,6 +70,14 @@ def test_recall_without_embeddings_misses_semantic_only_match(memory):
     assert memory.recall("kitten care tips") == []
 
 
+def test_search_scores_rank_stronger_matches_higher(memory):
+    memory.record("fix login latency under load", "add a redis cache")
+    memory.record("unrelated gardening chores with latency", "water the plants")
+
+    scores = {exp.task: score for exp, score in memory.storage.search("login latency", k=5)}
+    assert scores["fix login latency under load"] > scores["unrelated gardening chores with latency"]
+
+
 def test_search_with_zero_limit_returns_empty(memory):
     memory.record("a task", "an action")
     assert memory.storage.search("task", k=0) == []

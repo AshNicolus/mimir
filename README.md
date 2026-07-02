@@ -202,8 +202,8 @@ Configure an embedder and recall becomes hybrid: keyword (SQLite FTS5) and vecto
 candidates are fused with reciprocal-rank fusion, so an experience can be found by
 meaning even when it shares no words with the query. Install the `vector` extra to
 back vector search with a [sqlite-vec](https://github.com/asg017/sqlite-vec) ANN
-index; without it, recall falls back to a dependency-free Python cosine scan, so
-the behavior is identical and only the speed differs.
+index; without it, recall falls back to a Python cosine scan (numpy-accelerated
+when numpy is installed), so the behavior is identical and only the speed differs.
 
 ## Superseding stale experiences
 

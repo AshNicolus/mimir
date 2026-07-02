@@ -24,8 +24,10 @@ def query_terms(query: str) -> list[str]:
 
 
 def bm25_to_score(rank: float) -> float:
-    # bm25 ranks are unbounded and negative-leaning; map them into (0, 1].
-    return 1.0 / (1.0 + max(rank, 0.0))
+    # FTS5's bm25 is negative and more relevant the lower it goes, so flip it
+    # first, then squash into [0, 1). Same shape aggregate_actions uses.
+    s = max(-rank, 0.0)
+    return s / (1.0 + s)
 
 
 def context_matches(stored: dict, wanted: dict) -> bool:

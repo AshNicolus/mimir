@@ -160,6 +160,26 @@ def test_rerecording_same_id_does_not_duplicate_in_search(memory):
     assert memory.count() == 1
 
 
+def test_known_clusters_tracks_adds_and_deletes(memory):
+    first = memory.record("task", "First action")
+    assert [c.key for c in memory.storage.known_clusters()] == ["first action"]
+
+    memory.record("task", "second action")
+    assert len(memory.storage.known_clusters()) == 2
+
+    memory.delete(first.id)
+    assert [c.key for c in memory.storage.known_clusters()] == ["second action"]
+
+
+def test_known_clusters_follows_a_rerecord_to_a_new_action(memory):
+    exp = memory.record("task", "first attempt")
+    memory.storage.known_clusters()  # warm the cache before the re-record
+    exp.action = "second attempt"
+    memory.write(exp)
+
+    assert [c.key for c in memory.storage.known_clusters()] == ["second attempt"]
+
+
 def test_persists_across_reopen(tmp_path):
     db = str(tmp_path / "mimir.db")
     m1 = Mimir(db_path=db)

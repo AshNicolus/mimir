@@ -6,6 +6,11 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 
+try:
+    import numpy
+except ImportError:  # optional: part of the embeddings extra
+    numpy = None
+
 
 class Embedder(ABC):
     enabled: bool = True
@@ -27,6 +32,10 @@ class NullEmbedder(Embedder):
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
+    if numpy is not None:
+        va, vb = numpy.asarray(a), numpy.asarray(b)
+        norm = numpy.linalg.norm(va) * numpy.linalg.norm(vb)
+        return float(va @ vb / norm) if norm else 0.0
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
