@@ -48,6 +48,7 @@ class SQLiteStorage(Storage):
         self.registry_lock = threading.Lock()
         self.connections: list[sqlite3.Connection] = []
         self.readers = threading.local()
+        self.clusters: dict[str, str] | None = None  # action_norm -> representative
         self.vec_dim: int | None = None
         self.conn = self.open_connection(load_extension=False)
         self.vec_enabled = self.load_vec(self.conn)
@@ -171,6 +172,7 @@ class SQLiteStorage(Storage):
     def add(self, exp: Experience) -> None:
         with self.writing() as conn:
             action_norm = self.clusterer.key(exp.action, self.known_clusters)
+            self.update_clusters(conn, exp, action_norm)
             conn.execute(
                 "INSERT OR REPLACE INTO experiences "
                 "(id, task, action, action_norm, outcome, score, context, embedding, "
@@ -207,6 +209,9 @@ class SQLiteStorage(Storage):
 
     def delete(self, experience_id: str) -> bool:
         with self.writing() as conn:
+            # The deleted row may have been a cluster's last member or its
+            # representative, so rebuild lazily rather than track membership.
+            self.clusters = None
             cur = conn.execute("DELETE FROM experiences WHERE id = ?", (experience_id,))
             if self.fts_enabled:
                 conn.execute("DELETE FROM experiences_fts WHERE id = ?", (experience_id,))
@@ -244,10 +249,27 @@ class SQLiteStorage(Storage):
             return conn.execute("SELECT COUNT(*) FROM experiences").fetchone()[0]
 
     def known_clusters(self) -> list[Cluster]:
-        rows = self.conn.execute(
-            "SELECT action_norm AS key, MIN(action) AS action FROM experiences GROUP BY action_norm"
-        ).fetchall()
-        return [Cluster(key=r["key"], action=r["action"]) for r in rows]
+        # Loaded once, then kept in step by add() and invalidated by delete(),
+        # so clusterers don't rescan the table on every write.
+        if self.clusters is None:
+            rows = self.conn.execute(
+                "SELECT action_norm AS key, MIN(action) AS action "
+                "FROM experiences GROUP BY action_norm"
+            ).fetchall()
+            self.clusters = {r["key"]: r["action"] for r in rows}
+        return [Cluster(key=key, action=action) for key, action in self.clusters.items()]
+
+    def update_clusters(self, conn: sqlite3.Connection, exp: Experience, action_norm: str) -> None:
+        prior = conn.execute(
+            "SELECT action_norm FROM experiences WHERE id = ?", (exp.id,)
+        ).fetchone()
+        if prior is not None and prior["action_norm"] != action_norm:
+            self.clusters = None  # a re-record moved clusters; rebuild lazily
+        elif self.clusters is not None:
+            current = self.clusters.get(action_norm)
+            self.clusters[action_norm] = (
+                exp.action if current is None else min(current, exp.action)
+            )
 
     def search(
         self,
