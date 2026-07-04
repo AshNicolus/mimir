@@ -12,3 +12,4 @@ def test_quality_metrics_hold():
     assert metrics["recall_at_k"] >= 0.80, metrics
     assert metrics["mrr"] >= 0.90, metrics
     assert metrics["recommend_accuracy"] == 1.0, metrics
+    assert metrics["decay_recency_correct"] == 1.0, metrics

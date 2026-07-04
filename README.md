@@ -225,6 +225,19 @@ memory.supersede(old_id, new.id)
 Pass `include_superseded=True` to `recall()` or `recommend()` to see superseded
 rows anyway, which is useful for studying concept drift and decay.
 
+## Time decay
+
+Superseding is manual. For gradual staleness, set a half-life so `recommend()`
+discounts older evidence: an experience's weight halves every `half_life_days`,
+so a recent result outweighs an equally successful but older one. Off by default,
+which keeps all evidence equal.
+
+```python
+memory = Mimir(half_life_days=30)  # evidence from 30 days ago counts for half
+```
+
+Reported counts stay exact; decay only affects ranking.
+
 ## Roadmap
 
 | Phase | Goal | Status |
@@ -236,7 +249,7 @@ rows anyway, which is useful for studying concept drift and decay.
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Relevance-weighted aggregation, pluggable action clustering (non-LLM) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | Future |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
-| **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` | ✅ Done |
+| **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
 | **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |
 | **Concurrency** | Per-thread connections so reads scale under WAL, writes serialized | ✅ Done |
 | **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows |  Python 3.10–3.12 |

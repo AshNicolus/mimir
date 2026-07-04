@@ -27,6 +27,17 @@ class RecommendCase(NamedTuple):
     expected_action: str
 
 
+class AgedSeed(NamedTuple):
+    task: str
+    action: str
+    days_ago: int
+
+
+class DecayCase(NamedTuple):
+    task: str
+    recent_action: str  # the action decay should surface over the stale one
+
+
 # A small corpus of agent experiences across a few problem areas. Some actions
 # repeat with mixed outcomes so recommend() has a real track record to rank.
 SEEDS = [
@@ -67,3 +78,16 @@ RECOMMEND_CASES = [
     RecommendCase("throttle abusive api clients", "add a token bucket rate limiter"),
     RecommendCase("handle flaky upstream calls", "add retries with backoff"),
 ]
+
+# A stale approach that worked more often long ago, and a fresh one that works
+# now. Without decay the larger old sample wins; with decay the recent one does.
+DECAY_SEEDS = [
+    AgedSeed("scale the service under load", "manual scaling", days_ago=300),
+    AgedSeed("scale the service under load", "manual scaling", days_ago=300),
+    AgedSeed("scale the service under load", "manual scaling", days_ago=300),
+    AgedSeed("scale the service under load", "manual scaling", days_ago=300),
+    AgedSeed("scale the service under load", "autoscaling", days_ago=5),
+    AgedSeed("scale the service under load", "autoscaling", days_ago=5),
+]
+
+DECAY_CASE = DecayCase("scale the service under load", "autoscaling")

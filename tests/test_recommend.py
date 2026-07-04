@@ -1,6 +1,9 @@
-"""recommend(): ranking, counts, ablation, and action clustering."""
+"""recommend(): ranking, counts, ablation, action clustering, and time decay."""
 
-from mimir import Mimir
+from datetime import timedelta
+
+from mimir import Experience, Mimir
+from mimir.models import utcnow
 
 
 def test_recommend_prefers_more_proven_action(memory):
@@ -188,3 +191,51 @@ def test_recommend_can_include_superseded(memory):
 
     assert memory.recommend("auth is slow").based_on == 1
     assert memory.recommend("auth is slow", include_superseded=True).based_on == 2
+
+
+def record_aged(memory, task, action, days_ago):
+    exp = Experience(
+        task=task, action=action, created_at=utcnow() - timedelta(days=days_ago)
+    )
+    memory.write(exp)
+
+
+def seed_stale_vs_recent(memory):
+    # An old action with more wins, and a fresh action with fewer.
+    for _ in range(5):
+        record_aged(memory, "api latency", "old approach", days_ago=200)
+    for _ in range(2):
+        record_aged(memory, "api latency", "new approach", days_ago=2)
+
+
+def test_recommend_without_decay_prefers_the_larger_sample(memory):
+    seed_stale_vs_recent(memory)
+    assert memory.recommend("api latency").recommended_action == "old approach"
+
+
+def test_recommend_with_decay_prefers_the_recent_action(memory):
+    seed_stale_vs_recent(memory)
+    memory.half_life_days = 30
+    assert memory.recommend("api latency").recommended_action == "new approach"
+
+
+def test_decay_reranks_but_leaves_counts_exact(memory):
+    seed_stale_vs_recent(memory)
+    memory.half_life_days = 30
+    rec = memory.recommend("api latency")
+    assert rec.recommended_action == "new approach"
+    assert rec.success_count == 2  # decay only reweights ranking, not the counts
+
+
+def test_decay_works_without_sql_math_functions(memory):
+    memory.storage.math_enabled = False  # force the Python decay path
+    seed_stale_vs_recent(memory)
+    memory.half_life_days = 30
+    assert memory.recommend("api latency").recommended_action == "new approach"
+
+
+def test_decay_works_without_fts(memory):
+    memory.storage.fts_enabled = False  # force the no-FTS Python path
+    seed_stale_vs_recent(memory)
+    memory.half_life_days = 30
+    assert memory.recommend("api latency").recommended_action == "new approach"

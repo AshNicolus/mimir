@@ -60,9 +60,13 @@ class Storage(ABC):
         best first, over experiences that have an embedding."""
 
     @abstractmethod
-    def aggregate_actions(self, query: str, include_superseded: bool = False) -> list[ActionStat]:
+    def aggregate_actions(
+        self, query: str, include_superseded: bool = False, half_life_days: float | None = None
+    ) -> list[ActionStat]:
         """Group experiences matching the query by normalized action and return
-        per-action outcome counts, without hydrating every row."""
+        per-action outcome counts, without hydrating every row. When
+        ``half_life_days`` is set, each experience's weight halves every that
+        many days, so recent evidence outweighs stale evidence."""
 
     @abstractmethod
     def supporting_ids(
