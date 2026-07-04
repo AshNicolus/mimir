@@ -237,6 +237,7 @@ rows anyway, which is useful for studying concept drift and decay.
 | **6: Shared org memory** | Multiple agents learn from a shared store | Future |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` | ✅ Done |
+| **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |
 | **Concurrency** | Per-thread connections so reads scale under WAL, writes serialized | ✅ Done |
 | **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows |  Python 3.10–3.12 |
 
