@@ -205,6 +205,10 @@ back vector search with a [sqlite-vec](https://github.com/asg017/sqlite-vec) ANN
 index; without it, recall falls back to a Python cosine scan (numpy-accelerated
 when numpy is installed), so the behavior is identical and only the speed differs.
 
+Query embeddings are cached in a small per-instance LRU, so an agent retrying the
+same query doesn't pay to re-embed it. Tune it with `Mimir(query_cache_size=...)`,
+or pass `0` to disable.
+
 ## Superseding stale experiences
 
 Knowledge goes stale. Mark an old experience as replaced, and it drops out of

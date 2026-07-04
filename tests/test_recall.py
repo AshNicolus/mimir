@@ -65,6 +65,56 @@ def test_recall_finds_semantic_match_without_keyword_overlap():
         m.close()
 
 
+class CountingEmbedder(TopicEmbedder):
+    """TopicEmbedder that records how many times embed() ran."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def embed(self, text):
+        self.calls += 1
+        return super().embed(text)
+
+
+def test_repeated_query_is_embedded_once():
+    embedder = CountingEmbedder()
+    m = Mimir(":memory:", embedder=embedder)
+    try:
+        m.record("adopt a feline companion", "visit the shelter")
+        base = embedder.calls  # embedding the stored experience
+        m.recall("kitten care")
+        m.recall("kitten care")
+        assert embedder.calls == base + 1  # second recall hits the cache
+    finally:
+        m.close()
+
+
+def test_query_cache_can_be_disabled():
+    embedder = CountingEmbedder()
+    m = Mimir(":memory:", embedder=embedder, query_cache_size=0)
+    try:
+        m.record("adopt a feline companion", "visit the shelter")
+        base = embedder.calls
+        m.recall("kitten care")
+        m.recall("kitten care")
+        assert embedder.calls == base + 2  # every recall re-embeds
+    finally:
+        m.close()
+
+
+def test_query_cache_evicts_least_recently_used():
+    embedder = CountingEmbedder()
+    m = Mimir(":memory:", embedder=embedder, query_cache_size=2)
+    try:
+        m.embed_query("a")
+        m.embed_query("b")
+        m.embed_query("a")  # touch "a" so "b" is now least recent
+        m.embed_query("c")  # evicts "b"
+        assert set(m.query_cache) == {"a", "c"}
+    finally:
+        m.close()
+
+
 def test_recall_without_embeddings_misses_semantic_only_match(memory):
     memory.record("adopt a feline companion", "visit the shelter")
     assert memory.recall("kitten care tips") == []

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import OrderedDict
 
 from .clustering import ActionClusterer
 from .embeddings import Embedder, NullEmbedder
@@ -22,12 +23,18 @@ class Mimir:
         embedder: Embedder | None = None,
         clusterer: ActionClusterer | None = None,
         weight_by_relevance: bool = True,
+        query_cache_size: int = 256,
     ) -> None:
         self.storage = storage or SQLiteStorage(db_path, clusterer=clusterer)
         self.embedder = embedder or NullEmbedder()
         self.weight_by_relevance = weight_by_relevance
         # Serializes writes: embedders aren't guaranteed thread-safe.
         self.lock = threading.Lock()
+        # LRU of query text -> embedding: agents repeat queries on retries, and
+        # re-embedding costs a model pass or an API call. Set 0 to disable.
+        self.query_cache_size = query_cache_size
+        self.query_cache: OrderedDict[str, list[float]] = OrderedDict()
+        self.query_cache_lock = threading.Lock()
 
     def record(
         self,
@@ -112,11 +119,29 @@ class Mimir:
         if not self.embedder.enabled:
             return [exp for exp, _ in keyword[:k]]
         vector = self.storage.vector_search(
-            self.embedder.embed(query), k=width, outcome=outcome_val, context=context,
+            self.embed_query(query), k=width, outcome=outcome_val, context=context,
             include_superseded=include_superseded,
         )
         fused = reciprocal_rank_fusion(keyword, vector)
         return [exp for exp, _ in fused[:k]]
+
+    def embed_query(self, query: str) -> list[float]:
+        """Embed a query, reusing a cached vector for a repeated one. Embeddings
+        are pure functions of text, so the cache never needs invalidating."""
+        if self.query_cache_size <= 0:
+            return self.embedder.embed(query)
+        with self.query_cache_lock:
+            cached = self.query_cache.get(query)
+            if cached is not None:
+                self.query_cache.move_to_end(query)
+                return cached
+        vector = self.embedder.embed(query)
+        with self.query_cache_lock:
+            self.query_cache[query] = vector
+            self.query_cache.move_to_end(query)
+            while len(self.query_cache) > self.query_cache_size:
+                self.query_cache.popitem(last=False)
+        return vector
 
     def get(self, experience_id: str) -> Experience | None:
         return self.storage.get(experience_id)
