@@ -41,6 +41,7 @@ packages = ["src/mimir"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # let tests import the benchmarks package
 
 [tool.ruff]
 line-length = 100

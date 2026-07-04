@@ -36,3 +36,5 @@ jobs:
           pip install -e ".[dev,vector]"
       - name: Test (pytest)
         run: pytest -q
+      - name: Quality eval (metrics)
+        run: python -m benchmarks.eval
