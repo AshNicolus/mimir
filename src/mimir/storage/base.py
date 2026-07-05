@@ -11,8 +11,9 @@ from ..models import Experience
 class ActionStat(NamedTuple):
     """Outcome counts for one action across the experiences matching a query.
 
-    Raw counts are exact integers for reporting; the weighted fields sum each
-    experience's relevance to the query instead of counting it as 1.
+    Raw counts are exact integers for confidence and reporting. weighted_total
+    sums each experience's relevance (and recency, when decaying) to the query,
+    so recommend() can rank on how well-matched an action's evidence is.
     """
 
     action: str  # a representative phrasing of the action
@@ -21,8 +22,6 @@ class ActionStat(NamedTuple):
     failure: int
     partial: int
     total: int
-    weighted_success: float
-    weighted_partial: float
     weighted_total: float
 
 

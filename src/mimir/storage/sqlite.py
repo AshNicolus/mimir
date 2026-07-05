@@ -512,8 +512,6 @@ class SQLiteStorage(Storage):
                     "SUM(outcome = 'failure') AS failure, "
                     "SUM(outcome = 'partial') AS partial, "
                     "COUNT(*) AS total, "
-                    "SUM(weight * (outcome = 'success')) AS weighted_success, "
-                    "SUM(weight * (outcome = 'partial')) AS weighted_partial, "
                     "SUM(weight) AS weighted_total "
                     "FROM ("
                     f"  SELECT key, action, outcome, {weight} AS weight FROM ("
@@ -537,8 +535,6 @@ class SQLiteStorage(Storage):
                     failure=row["failure"],
                     partial=row["partial"],
                     total=row["total"],
-                    weighted_success=row["weighted_success"],
-                    weighted_partial=row["weighted_partial"],
                     weighted_total=row["weighted_total"],
                 )
                 for row in rows
@@ -590,20 +586,10 @@ class SQLiteStorage(Storage):
                 weight *= time_decay(age_days, half_life_days)
             group = groups.setdefault(
                 key,
-                {
-                    "action": action,
-                    "success": 0,
-                    "failure": 0,
-                    "partial": 0,
-                    "weighted_success": 0.0,
-                    "weighted_partial": 0.0,
-                    "weighted_total": 0.0,
-                },
+                {"action": action, "success": 0, "failure": 0, "partial": 0, "weighted_total": 0.0},
             )
             group[outcome] += 1
             group["weighted_total"] += weight
-            if outcome in ("success", "partial"):
-                group[f"weighted_{outcome}"] += weight
             group["action"] = min(group["action"], action)
         return [
             ActionStat(
@@ -613,8 +599,6 @@ class SQLiteStorage(Storage):
                 failure=g["failure"],
                 partial=g["partial"],
                 total=g["success"] + g["failure"] + g["partial"],
-                weighted_success=g["weighted_success"],
-                weighted_partial=g["weighted_partial"],
                 weighted_total=g["weighted_total"],
             )
             for key, g in groups.items()

@@ -173,14 +173,14 @@ print(memory.recommend("login times out under load"))
 
 ## Recommendations
 
-`recommend()` aggregates past experiences for a task and returns the action with
-the strongest track record, ranked by the lower bound of a Beta posterior on its
-success rate (a Jeffreys prior keeps small samples honest). Each experience
-contributes its relevance, so an action proven on closely matching tasks outranks
-an equally successful one proven on loosely related tasks, and more evidence
-concentrates the posterior and lifts the bound. Reported counts always cover the
-full matching population; weighting only affects ranking, and you can turn it off
-to compare:
+`recommend()` aggregates past experiences for a task and returns the best action.
+Its `confidence` is the lower bound of a Beta posterior on the action's success
+rate from its raw counts (a Jeffreys prior keeps small samples honest), so it
+reads as a success rate: a 9/10 action beats a lucky 1/1, and the number means the
+same whatever the query. Relevance and recency steer only which action wins, not
+the confidence: with weighting on (the default), an action proven on closely
+matching tasks outranks an equally confident one proven on loosely related ones.
+Turn weighting off to rank on track record alone:
 
 ```python
 memory.recommend("login times out under load", weight_by_relevance=False)
@@ -270,7 +270,7 @@ Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
 ## Status
 
-Alpha (`0.1.3`): **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Episodic and failure memory are complete and tested, and the recommendation engine works today via relevance-weighted outcome aggregation with pluggable action clustering (no LLM). `0.1.3` adds hybrid keyword + vector recall (optional sqlite-vec ANN index), schema versioning with a migration runner, concurrent reads under WAL, experience superseding for staleness, and an outcome/score consistency check. APIs may still change before `1.0`. Feedback and ideas welcome.
+Alpha (`0.1.4`): **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Episodic and failure memory are complete and tested, and the recommendation engine works today via Beta-posterior confidence over relevance/recency-weighted evidence, with pluggable action clustering (no LLM). Recall is hybrid keyword + vector (optional sqlite-vec ANN index), backed by schema versioning with a migration runner, concurrent reads under WAL, experience superseding and time decay for staleness, a query-embedding cache, and a recall@k / recommendation-accuracy eval gate in CI. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide. APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 

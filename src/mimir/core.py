@@ -178,35 +178,32 @@ class Mimir:
     ) -> Recommendation | None:
         """Suggest the action with the strongest track record on similar tasks.
 
-        Confidence is the Wilson lower bound of each action's success rate, so a
-        9/10 action outranks a lucky 1/1. With relevance weighting on (default),
-        each experience contributes its relevance instead of a flat 1; reported
-        counts always cover the full matching population. With ``half_life_days``
-        set on the instance, older evidence is discounted so recent results win.
+        Confidence is the Beta-posterior lower bound of the action's success rate
+        from its raw counts, so it reads as a success rate: a 9/10 action beats a
+        lucky 1/1, and the number means the same whatever the query. Relevance
+        (and recency, when ``half_life_days`` is set) only steers which action
+        wins, not the confidence: with weighting on, an action proven on closely
+        matching tasks outranks an equally confident one proven on loosely related
+        ones. Turn weighting off to rank on track record alone.
         """
         weighted = self.weight_by_relevance if weight_by_relevance is None else weight_by_relevance
         best_stat = None
-        best_confidence = -1.0
+        best_confidence = 0.0
+        best_rank = -1.0
         stats = self.storage.aggregate_actions(
             task, include_superseded=include_superseded, half_life_days=self.half_life_days
         )
         for stat in stats:
             if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
-            # A partial counts as half a success and half a failure. Weighted,
-            # each experience contributes its relevance/recency weight instead
-            # of 1, concentrating the posterior around better-supported actions.
-            if weighted:
-                wins, partials = stat.weighted_success, stat.weighted_partial
-                losses = stat.weighted_total - wins - partials
-                successes = wins + 0.5 * partials
-                failures = losses + 0.5 * partials
-            else:
-                successes = stat.success + 0.5 * stat.partial
-                failures = stat.failure + 0.5 * stat.partial
-            confidence = beta_lower_bound(successes, failures)
-            if confidence > best_confidence:
-                best_confidence, best_stat = confidence, stat
+            # Partial counts as half a success and half a failure.
+            confidence = beta_lower_bound(
+                stat.success + 0.5 * stat.partial, stat.failure + 0.5 * stat.partial
+            )
+            # Rank by confidence scaled by how relevant/recent the evidence is.
+            rank = confidence * (stat.weighted_total / stat.total) if weighted else confidence
+            if rank > best_rank:
+                best_rank, best_confidence, best_stat = rank, confidence, stat
         if best_stat is None:
             return None
         return Recommendation(
