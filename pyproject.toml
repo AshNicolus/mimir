@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mimir-learn"
-version = "0.1.3"
+version = "0.1.4"
 description = "Experience-driven memory for autonomous agents: learn from past successes and failures."
 readme = "README.md"
 license = { file = "LICENSE" }
