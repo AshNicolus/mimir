@@ -174,10 +174,13 @@ print(memory.recommend("login times out under load"))
 ## Recommendations
 
 `recommend()` aggregates past experiences for a task and returns the action with
-the strongest track record, ranked by a relevance-weighted Wilson lower bound. An
-action proven on closely matching tasks outranks an equally successful one proven
-on loosely related tasks. Reported counts always cover the full matching
-population; weighting only affects ranking, and you can turn it off to compare:
+the strongest track record, ranked by the lower bound of a Beta posterior on its
+success rate (a Jeffreys prior keeps small samples honest). Each experience
+contributes its relevance, so an action proven on closely matching tasks outranks
+an equally successful one proven on loosely related tasks, and more evidence
+concentrates the posterior and lifts the bound. Reported counts always cover the
+full matching population; weighting only affects ranking, and you can turn it off
+to compare:
 
 ```python
 memory.recommend("login times out under load", weight_by_relevance=False)
@@ -246,7 +249,7 @@ Reported counts stay exact; decay only affects ranking.
 | **2: Failure memory** | `record_failure()`, failures queried separately | ✅ Done |
 | **3: Reflection engine** | `reflect()`: cluster experiences, synthesize patterns (LLM) | Planned |
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
-| **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Relevance-weighted aggregation, pluggable action clustering (non-LLM) |
+| **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Beta-posterior confidence over relevance/recency-weighted evidence, pluggable action clustering (non-LLM) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | Future |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |

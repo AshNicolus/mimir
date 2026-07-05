@@ -10,7 +10,7 @@ from collections import OrderedDict
 from .clustering import ActionClusterer
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, Recommendation
-from .ranking import default_score, reciprocal_rank_fusion, wilson_lower_bound
+from .ranking import beta_lower_bound, default_score, reciprocal_rank_fusion
 from .storage import SQLiteStorage, Storage
 
 
@@ -179,13 +179,18 @@ class Mimir:
         for stat in stats:
             if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
+            # A partial counts as half a success and half a failure. Weighted,
+            # each experience contributes its relevance/recency weight instead
+            # of 1, concentrating the posterior around better-supported actions.
             if weighted:
-                successes = stat.weighted_success + 0.5 * stat.weighted_partial
-                total = stat.weighted_total
+                wins, partials = stat.weighted_success, stat.weighted_partial
+                losses = stat.weighted_total - wins - partials
+                successes = wins + 0.5 * partials
+                failures = losses + 0.5 * partials
             else:
                 successes = stat.success + 0.5 * stat.partial
-                total = stat.total
-            confidence = wilson_lower_bound(successes, total)
+                failures = stat.failure + 0.5 * stat.partial
+            confidence = beta_lower_bound(successes, failures)
             if confidence > best_confidence:
                 best_confidence, best_stat = confidence, stat
         if best_stat is None:
