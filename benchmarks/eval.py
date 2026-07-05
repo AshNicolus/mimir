@@ -10,10 +10,12 @@ regression gate: tests/test_eval.py asserts these metrics stay above a floor.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
-from mimir import Mimir
+from mimir import Experience, Mimir
+from mimir.models import utcnow
 
-from .eval_dataset import RECALL_CASES, RECOMMEND_CASES, SEEDS
+from .eval_dataset import DECAY_CASE, DECAY_SEEDS, RECALL_CASES, RECOMMEND_CASES, SEEDS
 
 
 def seed_store() -> tuple[Mimir, dict[str, str]]:
@@ -51,14 +53,28 @@ def recommend_accuracy(memory: Mimir) -> float:
     return correct / len(RECOMMEND_CASES)
 
 
+def decay_recency_correct(half_life_days: float = 30) -> float:
+    """1.0 if decay surfaces the recent action over the larger stale sample."""
+    memory = Mimir(":memory:", half_life_days=half_life_days)
+    try:
+        for s in DECAY_SEEDS:
+            created = utcnow() - timedelta(days=s.days_ago)
+            memory.write(Experience(task=s.task, action=s.action, created_at=created))
+        rec = memory.recommend(DECAY_CASE.task)
+        return 1.0 if rec and rec.recommended_action == DECAY_CASE.recent_action else 0.0
+    finally:
+        memory.close()
+
+
 def run_eval(k: int = 5) -> dict[str, float]:
     memory, labels = seed_store()
     try:
         metrics = recall_metrics(memory, labels, k=k)
         metrics["recommend_accuracy"] = recommend_accuracy(memory)
-        return {key: round(value, 4) for key, value in metrics.items()}
     finally:
         memory.close()
+    metrics["decay_recency_correct"] = decay_recency_correct()
+    return {key: round(value, 4) for key, value in metrics.items()}
 
 
 def main() -> None:

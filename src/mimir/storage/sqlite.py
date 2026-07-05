@@ -22,7 +22,8 @@ except ImportError:
 
 from ..clustering import ActionClusterer, Cluster, ExactClusterer
 from ..embeddings import cosine_similarity
-from ..models import Experience, Outcome
+from ..models import Experience, Outcome, utcnow
+from ..ranking import time_decay
 from .base import ActionStat, Storage
 from .migrations import run_migrations
 from .query import bm25_to_score, context_matches, context_sql_filters, query_terms, tokenize
@@ -52,7 +53,17 @@ class SQLiteStorage(Storage):
         self.vec_dim: int | None = None
         self.conn = self.open_connection(load_extension=False)
         self.vec_enabled = self.load_vec(self.conn)
+        self.math_enabled = self.detect_math()
         self.fts_enabled = self.init_schema()
+
+    def detect_math(self) -> bool:
+        # pow() is only present when SQLite was built with math functions, so
+        # decay computes in SQL when it is and falls back to Python when not.
+        try:
+            self.conn.execute("SELECT pow(2.0, 3.0)")
+            return True
+        except sqlite3.OperationalError:
+            return False
 
     def open_connection(self, *, load_extension: bool) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -474,14 +485,24 @@ class SQLiteStorage(Storage):
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return scored[:k] if k is not None else scored
 
-    def aggregate_actions(self, query: str, include_superseded: bool = False) -> list[ActionStat]:
+    def aggregate_actions(
+        self, query: str, include_superseded: bool = False, half_life_days: float | None = None
+    ) -> list[ActionStat]:
         terms = query_terms(query)
         if not terms:
             return []
+        decay = bool(half_life_days and half_life_days > 0)
         live = "" if include_superseded else " AND e.superseded_by IS NULL"
 
-        if self.fts_enabled:
+        # Fast path: aggregate in SQL when there's no decay, or decay the weight
+        # in SQL where math functions are available.
+        if self.fts_enabled and (not decay or self.math_enabled):
             match = " OR ".join(f'"{t}"' for t in terms)
+            weight = "s / (1.0 + s)"
+            params: list[object] = [match]
+            if decay:
+                weight += " * pow(2.0, -(julianday('now') - julianday(created_at)) / ?)"
+                params = [half_life_days, match]
             with self.reading() as conn:
                 rows = conn.execute(
                     "SELECT key, MIN(action) AS action, "
@@ -493,10 +514,9 @@ class SQLiteStorage(Storage):
                     "SUM(weight * (outcome = 'partial')) AS weighted_partial, "
                     "SUM(weight) AS weighted_total "
                     "FROM ("
-                    # s = -bm25 is the relevance magnitude; s/(1+s) squashes it into [0, 1).
-                    "  SELECT key, action, outcome, s / (1.0 + s) AS weight FROM ("
+                    f"  SELECT key, action, outcome, {weight} AS weight FROM ("
                     "    SELECT e.action_norm AS key, e.action AS action, e.outcome AS outcome, "
-                    "    max(-bm25(experiences_fts), 0.0) AS s "
+                    "    e.created_at AS created_at, max(-bm25(experiences_fts), 0.0) AS s "
                     "    FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
                     f"    WHERE experiences_fts MATCH ?{live} "
                     # LIMIT stops SQLite flattening the subquery into the outer
@@ -505,7 +525,7 @@ class SQLiteStorage(Storage):
                     "  )"
                     ") "
                     "GROUP BY key",
-                    (match,),
+                    params,
                 ).fetchall()
             return [
                 ActionStat(
@@ -522,23 +542,54 @@ class SQLiteStorage(Storage):
                 for row in rows
             ]
 
-        # No FTS5: group in Python, weighting by the fraction of terms matched.
+        # Decay without SQL math functions: score per row, then group in Python.
+        if self.fts_enabled:
+            match = " OR ".join(f'"{t}"' for t in terms)
+            with self.reading() as conn:
+                rows = conn.execute(
+                    "SELECT key, action, outcome, created_at, s / (1.0 + s) AS relevance FROM ("
+                    "  SELECT e.action_norm AS key, e.action AS action, e.outcome AS outcome, "
+                    "  e.created_at AS created_at, max(-bm25(experiences_fts), 0.0) AS s "
+                    "  FROM experiences_fts JOIN experiences e ON e.id = experiences_fts.id "
+                    f"  WHERE experiences_fts MATCH ?{live} LIMIT -1"
+                    ")",
+                    (match,),
+                ).fetchall()
+            scored = (
+                (r["key"], r["action"], r["outcome"], r["created_at"], r["relevance"]) for r in rows
+            )
+            return self.group_stats(scored, half_life_days)
+
+        # No FTS5: weight by the fraction of query terms matched, group in Python.
         wanted = set(terms)
-        sql = "SELECT task, action, action_norm, outcome FROM experiences"
+        sql = "SELECT task, action, action_norm, outcome, created_at FROM experiences"
         if not include_superseded:
             sql += " WHERE superseded_by IS NULL"
         with self.reading() as conn:
             rows = conn.execute(sql).fetchall()
-        groups: dict[str, dict] = {}
+        scored = []
         for row in rows:
             matched = wanted & set(tokenize(f"{row['task']}\n{row['action']}"))
-            if not matched:
-                continue
-            weight = len(matched) / len(wanted)
+            if matched:
+                relevance = len(matched) / len(wanted)
+                key = row["action_norm"]
+                scored.append((key, row["action"], row["outcome"], row["created_at"], relevance))
+        return self.group_stats(scored, half_life_days)
+
+    def group_stats(self, rows, half_life_days: float | None) -> list[ActionStat]:
+        """Group scored (key, action, outcome, created_at, relevance) rows into
+        per-action stats, decaying each row's weight by age when asked."""
+        now = utcnow() if half_life_days and half_life_days > 0 else None
+        groups: dict[str, dict] = {}
+        for key, action, outcome, created_at, relevance in rows:
+            weight = relevance
+            if now is not None:
+                age_days = (now - datetime.fromisoformat(created_at)).total_seconds() / 86400
+                weight *= time_decay(age_days, half_life_days)
             group = groups.setdefault(
-                row["action_norm"],
+                key,
                 {
-                    "action": row["action"],
+                    "action": action,
                     "success": 0,
                     "failure": 0,
                     "partial": 0,
@@ -547,11 +598,11 @@ class SQLiteStorage(Storage):
                     "weighted_total": 0.0,
                 },
             )
-            group[row["outcome"]] += 1
+            group[outcome] += 1
             group["weighted_total"] += weight
-            if row["outcome"] in ("success", "partial"):
-                group[f"weighted_{row['outcome']}"] += weight
-            group["action"] = min(group["action"], row["action"])
+            if outcome in ("success", "partial"):
+                group[f"weighted_{outcome}"] += weight
+            group["action"] = min(group["action"], action)
         return [
             ActionStat(
                 action=g["action"],

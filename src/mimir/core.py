@@ -23,11 +23,14 @@ class Mimir:
         embedder: Embedder | None = None,
         clusterer: ActionClusterer | None = None,
         weight_by_relevance: bool = True,
+        half_life_days: float | None = None,
         query_cache_size: int = 256,
     ) -> None:
         self.storage = storage or SQLiteStorage(db_path, clusterer=clusterer)
         self.embedder = embedder or NullEmbedder()
         self.weight_by_relevance = weight_by_relevance
+        # Age at which past evidence counts for half. None keeps all evidence equal.
+        self.half_life_days = half_life_days
         # Serializes writes: embedders aren't guaranteed thread-safe.
         self.lock = threading.Lock()
         # LRU of query text -> embedding: agents repeat queries on retries, and
@@ -164,12 +167,16 @@ class Mimir:
         Confidence is the Wilson lower bound of each action's success rate, so a
         9/10 action outranks a lucky 1/1. With relevance weighting on (default),
         each experience contributes its relevance instead of a flat 1; reported
-        counts always cover the full matching population.
+        counts always cover the full matching population. With ``half_life_days``
+        set on the instance, older evidence is discounted so recent results win.
         """
         weighted = self.weight_by_relevance if weight_by_relevance is None else weight_by_relevance
         best_stat = None
         best_confidence = -1.0
-        for stat in self.storage.aggregate_actions(task, include_superseded=include_superseded):
+        stats = self.storage.aggregate_actions(
+            task, include_superseded=include_superseded, half_life_days=self.half_life_days
+        )
+        for stat in stats:
             if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
             if weighted:

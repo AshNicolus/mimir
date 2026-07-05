@@ -30,6 +30,13 @@ def reciprocal_rank_fusion(
     return fused
 
 
+def time_decay(age_days: float, half_life_days: float) -> float:
+    """Halve an experience's weight every ``half_life_days``."""
+    if half_life_days <= 0:
+        return 1.0
+    return 2.0 ** (-max(age_days, 0.0) / half_life_days)
+
+
 def wilson_lower_bound(successes: float, total: float, z: float = 1.96) -> float:
     """Lower bound of a Wilson score interval: rewards both a high success rate
     and a large sample. Accepts a relevance-weighted (non-integer) total."""
