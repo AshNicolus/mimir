@@ -39,17 +39,18 @@ def time_decay(age_days: float, half_life_days: float) -> float:
 
 def incomplete_beta(a: float, b: float, x: float) -> float:
     """Regularized incomplete beta I_x(a, b), i.e. the Beta(a, b) CDF at x."""
+    log_norm = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    return incomplete_beta_at(a, b, x, log_norm)
+
+
+def incomplete_beta_at(a: float, b: float, x: float, log_norm: float) -> float:
+    # log_norm is the x-independent part, passed in so inversion computes it once.
     if x <= 0.0:
         return 0.0
     if x >= 1.0:
         return 1.0
-    ln_front = (
-        math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
-        + a * math.log(x) + b * math.log1p(-x)
-    )
-    front = math.exp(ln_front)
-    # The continued fraction converges quickly below this pivot; past it, the
-    # symmetry I_x(a, b) = 1 - I_(1-x)(b, a) keeps it in the fast region.
+    front = math.exp(log_norm + a * math.log(x) + b * math.log1p(-x))
+    # Below the pivot the fraction converges fast; past it, use I_x = 1 - I_(1-x).
     if x < (a + 1.0) / (a + b + 2.0):
         return front * beta_cf(a, b, x) / a
     return 1.0 - front * beta_cf(b, a, 1.0 - x) / b
@@ -85,18 +86,18 @@ def beta_lower_bound(
     """Lower end of a one-sided credible interval for the success rate: the
     ``tail`` quantile of the Beta(prior + successes, prior + failures) posterior.
 
-    A Jeffreys prior (0.5) keeps small samples honest, and more evidence, whether
-    counted raw or relevance/recency-weighted, concentrates the posterior and
-    lifts the bound. Found by bisecting the Beta CDF, which is monotonic in x.
+    A Jeffreys prior (0.5) keeps small samples honest; more evidence (raw or
+    weighted) concentrates the posterior and lifts the bound.
     """
     a = prior + successes
     b = prior + failures
     if successes <= 0.0:
         return 0.0
+    log_norm = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
     lo, hi = 0.0, 1.0
-    for _ in range(100):
+    while hi - lo > 1e-9:
         mid = (lo + hi) / 2.0
-        if incomplete_beta(a, b, mid) < tail:
+        if incomplete_beta_at(a, b, mid, log_norm) < tail:
             lo = mid
         else:
             hi = mid

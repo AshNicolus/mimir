@@ -179,9 +179,7 @@ class Mimir:
         for stat in stats:
             if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
-            # A partial counts as half a success and half a failure. Weighted,
-            # each experience contributes its relevance/recency weight instead
-            # of 1, concentrating the posterior around better-supported actions.
+            # A partial splits half to success, half to failure.
             if weighted:
                 wins, partials = stat.weighted_success, stat.weighted_partial
                 losses = stat.weighted_total - wins - partials
