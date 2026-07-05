@@ -61,15 +61,30 @@ def test_recommend_prefers_more_relevant_action(memory):
     assert rec.recommended_action == "add a read cache"
 
 
-def test_relevance_weighting_is_ablatable(memory):
-    for _ in range(5):
-        memory.record("authentication note", "rewrite the query", outcome="success")
+def test_relevance_weighting_changes_which_action_wins(memory):
+    # "rewrite the query" is more proven but barely matches; "add a read cache"
+    # is less proven but closely matches the query.
+    for _ in range(6):
+        memory.record("slow batch job cleanup", "rewrite the query", outcome="success")
+    for _ in range(3):
+        memory.record("login latency is slow under load", "add a read cache", outcome="success")
 
-    on = memory.recommend("authentication login latency is slow", weight_by_relevance=True)
-    off = memory.recommend("authentication login latency is slow", weight_by_relevance=False)
-    assert on is not None and off is not None
-    assert on.recommended_action == off.recommended_action == "rewrite the query"
-    assert on.confidence != off.confidence
+    on = memory.recommend("login latency is slow", weight_by_relevance=True)
+    off = memory.recommend("login latency is slow", weight_by_relevance=False)
+    # Weighting picks the relevant action; without it, the more-proven one wins.
+    assert on.recommended_action == "add a read cache"
+    assert off.recommended_action == "rewrite the query"
+
+
+def test_confidence_is_an_interpretable_success_rate(memory):
+    # 8/8 successes reads high regardless of how the query matches, and weighting
+    # does not change the reported confidence, only the ranking.
+    for _ in range(8):
+        memory.record("api latency under load", "add a redis cache", outcome="success")
+    on = memory.recommend("latency spikes", weight_by_relevance=True)
+    off = memory.recommend("latency spikes", weight_by_relevance=False)
+    assert on.confidence == off.confidence
+    assert on.confidence > 0.6
 
 
 def test_default_clusterer_keeps_phrasings_separate(memory):
