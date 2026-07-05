@@ -120,6 +120,33 @@ def test_recall_without_embeddings_misses_semantic_only_match(memory):
     assert memory.recall("kitten care tips") == []
 
 
+def record_aged(memory, task, action, days_ago):
+    from datetime import timedelta
+
+    from mimir import Experience
+    from mimir.models import utcnow
+
+    memory.write(Experience(task=task, action=action, created_at=utcnow() - timedelta(days=days_ago)))
+
+
+def test_recall_without_half_life_ignores_age(memory):
+    record_aged(memory, "fix login latency", "old fix", days_ago=300)
+    record_aged(memory, "fix login latency", "new fix", days_ago=1)
+    # No half-life: both equally relevant, so age does not decide the order.
+    actions = {e.action for e in memory.recall("login latency", k=2)}
+    assert actions == {"old fix", "new fix"}
+
+
+def test_recall_with_half_life_prefers_the_recent_experience():
+    m = Mimir(":memory:", half_life_days=30)
+    try:
+        record_aged(m, "fix login latency", "old fix", days_ago=300)
+        record_aged(m, "fix login latency", "new fix", days_ago=1)
+        assert m.recall("login latency", k=1)[0].action == "new fix"
+    finally:
+        m.close()
+
+
 def test_search_scores_rank_stronger_matches_higher(memory):
     memory.record("fix login latency under load", "add a redis cache")
     memory.record("unrelated gardening chores with latency", "water the plants")

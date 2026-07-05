@@ -9,8 +9,8 @@ from collections import OrderedDict
 
 from .clustering import ActionClusterer
 from .embeddings import Embedder, NullEmbedder
-from .models import Experience, Outcome, Recommendation
-from .ranking import beta_lower_bound, default_score, reciprocal_rank_fusion
+from .models import Experience, Outcome, Recommendation, utcnow
+from .ranking import beta_lower_bound, default_score, reciprocal_rank_fusion, time_decay
 from .storage import SQLiteStorage, Storage
 
 
@@ -112,6 +112,8 @@ class Mimir:
 
         With an embedder configured, keyword and vector candidates are fused so
         an experience can match by meaning alone; otherwise it is keyword search.
+        With ``half_life_days`` set, recency reweights candidates so a fresh
+        experience outranks an equally relevant but staler one.
         """
         outcome_val = outcome.value if isinstance(outcome, Outcome) else outcome
         width = k * 4  # over-fetch candidates before fusing and trimming to k
@@ -119,14 +121,26 @@ class Mimir:
             query, k=width, outcome=outcome_val, context=context,
             include_superseded=include_superseded,
         )
-        if not self.embedder.enabled:
-            return [exp for exp, _ in keyword[:k]]
-        vector = self.storage.vector_search(
-            self.embed_query(query), k=width, outcome=outcome_val, context=context,
-            include_superseded=include_superseded,
-        )
-        fused = reciprocal_rank_fusion(keyword, vector)
-        return [exp for exp, _ in fused[:k]]
+        if self.embedder.enabled:
+            vector = self.storage.vector_search(
+                self.embed_query(query), k=width, outcome=outcome_val, context=context,
+                include_superseded=include_superseded,
+            )
+            candidates = reciprocal_rank_fusion(keyword, vector)
+        else:
+            candidates = keyword
+        if self.half_life_days:
+            candidates = self.apply_recency(candidates)
+        return [exp for exp, _ in candidates[:k]]
+
+    def apply_recency(self, candidates: list[tuple[Experience, float]]):
+        now = utcnow()
+        scored = []
+        for exp, score in candidates:
+            age_days = (now - exp.created_at).total_seconds() / 86400
+            scored.append((exp, score * time_decay(age_days, self.half_life_days)))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored
 
     def embed_query(self, query: str) -> list[float]:
         """Embed a query, reusing a cached vector for a repeated one. Embeddings

@@ -227,7 +227,9 @@ class SQLiteStorage(Storage):
             if self.fts_enabled:
                 conn.execute("DELETE FROM experiences_fts WHERE id = ?", (experience_id,))
             if self.vec_enabled and self.vec_dim is not None:
-                conn.execute("DELETE FROM vec_experiences WHERE experience_id = ?", (experience_id,))
+                conn.execute(
+                    "DELETE FROM vec_experiences WHERE experience_id = ?", (experience_id,)
+                )
             return cur.rowcount > 0
 
     def set_superseded_by(self, experience_id: str, superseded_by: str | None) -> bool:
