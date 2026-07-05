@@ -29,6 +29,25 @@ Outcome:  Success
 
 A month later, the agent has no meaningful understanding that this strategy worked. It solves the same class of problem from zero, every time.
 
+## Why you need Mimir
+
+If you run agents on real work, you have seen these symptoms:
+
+- **The agent solves the same problem again and again.** It fixed a flaky deploy last week, and this week it burns the same tokens rediscovering the same fix.
+- **It repeats mistakes.** An approach that failed three times gets tried a fourth time, because nothing remembers that it failed.
+- **Its knowledge lives in a hand-written file.** AGENTS.md and system prompts capture what you *told* it, not what it *learned*, and someone has to keep them current by hand.
+- **You can't answer "how often does this actually work?"** There is no track record behind the agent's choices, so there is nothing to trust, tune, or audit.
+
+Mimir fixes this by giving the agent a track record. Every task it attempts becomes a data point: what was tried, and whether it worked. Then, on the next task:
+
+- `recall()` surfaces the most relevant past attempts, successes and failures both, so the agent starts from evidence instead of from zero.
+- `recommend()` returns the single best-supported action with an honest confidence, a conservative success rate you can threshold on. Reuse the strategy when confidence is high, explore when it is low, and never repeat an action that has only ever failed.
+- Stale knowledge fades. Supersede an experience explicitly, or set a half-life and let old evidence lose weight on its own as the world drifts.
+
+The result is an agent that gets measurably cheaper and more reliable on the task families it sees often, with a memory you can inspect: every recommendation cites the experiences behind it.
+
+And it costs almost nothing to adopt: one `pip install`, a local SQLite file, no server, no LLM in the loop, and two calls (`record` after acting, `recall`/`recommend` before) wired into the agent loop you already have.
+
 ## The idea
 
 Instead of storing documents, embeddings, and metadata, Mimir stores **experiences**:
