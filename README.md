@@ -239,7 +239,9 @@ which keeps all evidence equal.
 memory = Mimir(half_life_days=30)  # evidence from 30 days ago counts for half
 ```
 
-Reported counts stay exact; decay only affects ranking.
+The same half-life also reweights `recall()`: a fresh experience outranks an
+equally relevant but staler one. Reported counts stay exact; decay only affects
+ranking.
 
 ## Roadmap
 
