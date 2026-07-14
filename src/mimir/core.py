@@ -8,6 +8,7 @@ import threading
 from collections import OrderedDict
 
 from .clustering import ActionClusterer
+from .distill import Distiller, transcript_id
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, Recommendation, utcnow
 from .ranking import beta_lower_bound, default_score, reciprocal_rank_fusion, time_decay
@@ -81,6 +82,49 @@ class Mimir:
         return self.record(
             task, action, outcome=Outcome.FAILURE, score=score, context=ctx, supersedes=supersedes
         )
+
+    def record_conversation(
+        self,
+        messages: list[dict],
+        *,
+        distiller: Distiller,
+        outcome: str | Outcome | None = None,
+        score: float | None = None,
+        context: dict | None = None,
+    ) -> Experience | None:
+        """Distill a finished conversation into one experience.
+
+        Ground truth wins: an outcome or score passed here overrides whatever
+        the distiller inferred, and with no outcome from either side this
+        raises rather than assume success. Returns None when the distiller
+        abstains. Re-recording the same transcript replaces the earlier row.
+        """
+        draft = distiller.distill(messages)
+        if draft is None:
+            return None
+        if outcome is not None:
+            final = Outcome(outcome)
+            if score is None:
+                score = default_score(final)  # the draft's score graded a different verdict
+        else:
+            if draft.outcome is None:
+                raise ValueError(
+                    "no outcome: pass ground truth or use a distiller that infers it"
+                )
+            final = draft.outcome
+            if score is None:
+                score = draft.score if draft.score is not None else default_score(final)
+        ctx = {**draft.context, **(context or {})}
+        ctx.update(source="transcript", distiller=distiller.name)
+        exp = Experience(
+            id=transcript_id(messages),
+            task=draft.task,
+            action=draft.action,
+            outcome=final,
+            score=score,
+            context=ctx,
+        )
+        return self.write(exp)
 
     def supersede(self, old_id: str, new_id: str) -> bool:
         """Mark old_id as replaced by new_id, hiding it from recall and

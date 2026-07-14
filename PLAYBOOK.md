@@ -25,11 +25,12 @@ is no server and no LLM to run, and the only required dependency is Pydantic.
 11. [Grouping equivalent actions](#grouping-equivalent-actions)
 12. [Persistence, concurrency, and lifecycle](#persistence-concurrency-and-lifecycle)
 13. [Integrations](#integrations)
-14. [Patterns and best practices](#patterns-and-best-practices)
-15. [Testing your integration](#testing-your-integration)
-16. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-17. [Extending Mimir](#extending-mimir)
-18. [API reference](#api-reference)
+14. [Distilling conversations into experiences](#distilling-conversations-into-experiences)
+15. [Patterns and best practices](#patterns-and-best-practices)
+16. [Testing your integration](#testing-your-integration)
+17. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+18. [Extending Mimir](#extending-mimir)
+19. [API reference](#api-reference)
 
 ## What Mimir is
 
@@ -682,6 +683,82 @@ for exp in memory.recall("lower infrastructure costs", k=2):
 memory.close()
 ```
 
+## Distilling conversations into experiences
+
+Everything so far assumed your loop knows the task and action as strings. Often
+what you actually have at the end of a run is a transcript. `record_conversation`
+bridges the two: give it the messages and a distiller, and Mimir stores one
+experience distilled from the conversation.
+
+```python
+from mimir import CallableDistiller, Draft, Mimir
+
+memory = Mimir("agent-memory.db")
+
+def summarize(messages) -> Draft | None:
+    ...  # summarize the transcript; return None when no clean task emerges
+
+memory.record_conversation(
+    messages,                                  # the transcript you already have
+    distiller=CallableDistiller(summarize),
+    outcome="success",                         # ground truth: tests, exit code, user acceptance
+)
+```
+
+Three rules keep distilled memory trustworthy:
+
+- **Ground truth wins.** An `outcome` or `score` you pass overrides whatever the
+  distiller inferred. If neither you nor the distiller knows the outcome,
+  `record_conversation` raises rather than assume success, because a wrong
+  outcome label is the one thing the confidence engine cannot recover from.
+- **Abstention is fine.** A distiller that returns `None` stores nothing. A
+  memory with gaps stays trustworthy; one padded with bad extractions does not.
+- **Every distilled row carries provenance.** The context gains
+  `source="transcript"` and the distiller's name, and the experience id is
+  derived from the transcript, so ingesting the same conversation twice replaces
+  the row instead of duplicating it, and you can audit or supersede everything a
+  given distiller wrote.
+
+### An LLM distiller
+
+Any `messages -> Draft | None` function works. Here is one backed by the
+Anthropic SDK; the shape is the same for any provider.
+
+```python
+import json
+from anthropic import Anthropic
+from mimir import CallableDistiller, Draft
+
+client = Anthropic()
+
+PROMPT = (
+    "This transcript shows an agent completing one task. Reply with JSON: "
+    '{"task": the problem phrased generally, "action": what was done, one '
+    "sentence, no transcript quotes}. Reply with null if no clear completed task."
+)
+
+def distill(messages):
+    reply = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=300,
+        messages=[{"role": "user", "content": f"{PROMPT}\n\n{json.dumps(messages)}"}],
+    )
+    data = json.loads(reply.content[0].text)
+    return Draft(**data) if data else None
+
+distiller = CallableDistiller(distill, name="claude-sonnet-5")
+```
+
+Two constraints in that prompt earn their place. The action must be a
+generalizable summary rather than quoted transcript text, which keeps secrets
+out of the store and lets equivalent actions cluster. And the task should be
+phrased generally, so future recall matches the whole family of similar tasks,
+not just this exact instance.
+
+Let the distiller fill in the outcome only when you have no better signal; a
+test result or an exit code is always worth more than the model's own reading
+of how the conversation went.
+
 ## Patterns and best practices
 
 - Close the loop every time. The value compounds only if you record outcomes,
@@ -762,6 +839,8 @@ the rest. Pass any of them to the constructor.
   the default. Implement `embed(text)` for local or API embeddings.
 - `ActionClusterer` decides how equivalent actions are grouped. `ExactClusterer`
   is the default, and `EmbeddingClusterer` or your own class can merge synonyms.
+- `Distiller` decides how a transcript becomes a draft experience. It is passed
+  per call to `record_conversation` rather than to the constructor.
 
 ```python
 memory = Mimir(storage=MyStorage(), embedder=MyEmbedder(), clusterer=MyClusterer())
@@ -787,6 +866,7 @@ memory = Mimir(storage=MyStorage(), embedder=MyEmbedder(), clusterer=MyClusterer
 |---|---|---|
 | `record(task, action, outcome="success", score=None, context=None, supersedes=None)` | `Experience` | Store an experience. |
 | `record_failure(task, action, reason=None, score=0.0, context=None, supersedes=None)` | `Experience` | Store a failure with a reason. |
+| `record_conversation(messages, *, distiller, outcome=None, score=None, context=None)` | `Experience` or `None` | Distill a transcript into one experience. |
 | `recall(query, k=5, outcome=None, context=None, include_superseded=False)` | `list[Experience]` | Most relevant past experiences. |
 | `recommend(task, *, weight_by_relevance=None, include_superseded=False)` | `Recommendation` or `None` | Best-supported action for a task. |
 | `supersede(old_id, new_id)` | `bool` | Mark an experience as replaced. |
@@ -810,3 +890,10 @@ indexes and embeds.
 `success_count`, `failure_count`, `partial_count`, `based_on`, and
 `supporting_ids`. The `.total` property sums the counts, and `str(rec)` prints a
 readable summary.
+
+### `Distiller` and `Draft`
+
+A `Distiller` implements `distill(messages) -> Draft | None`, where `None`
+abstains. `CallableDistiller(fn, name="...")` wraps a plain function. A `Draft`
+holds `task`, `action`, optional `outcome` and `score`, and a `context` dict;
+`record_conversation` merges it with ground truth and provenance before writing.

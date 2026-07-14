@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .clustering import ActionClusterer, EmbeddingClusterer, ExactClusterer
 from .core import Mimir
+from .distill import CallableDistiller, Distiller, Draft
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, OutcomeScoreWarning, Recommendation
 from .storage import SQLiteStorage, Storage
@@ -26,4 +27,7 @@ __all__ = [
     "ActionClusterer",
     "ExactClusterer",
     "EmbeddingClusterer",
+    "Distiller",
+    "CallableDistiller",
+    "Draft",
 ]
