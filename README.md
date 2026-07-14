@@ -205,6 +205,11 @@ Turn weighting off to rank on track record alone:
 memory.recommend("login times out under load", weight_by_relevance=False)
 ```
 
+Pass `explore=True` to draw the winner by Thompson sampling instead of always
+exploiting: promising but less-proven actions win a share of calls, which is how
+an agent that records its outcomes discovers better strategies over time. Actions
+that have only ever failed are still never recommended.
+
 By default actions are grouped by normalized text, so "Added Redis cache" and
 "use redis caching" count as separate strategies. Plug in a clusterer to merge
 equivalent phrasings and pool their evidence:

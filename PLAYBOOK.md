@@ -323,6 +323,35 @@ action's own honest success rate.
 
 Set the instance default with `Mimir(weight_by_relevance=False)`.
 
+### Exploring instead of exploiting
+
+The default mode always returns the best-supported action, which means an
+almost-as-good newcomer never gets a chance to prove itself. Pass `explore=True`
+and the winner is drawn by Thompson sampling instead: each action's rank is a
+random draw from its posterior, so a less-proven action wins a share of calls
+proportional to how likely it is to actually be better.
+
+```python
+action = memory.recommend("api latency high", explore=True).recommended_action
+```
+
+Use it when the agent will record the outcome afterwards, because that is what
+makes exploration pay: trying the newcomer either builds its track record or
+rules it out. Three guarantees hold either way: actions that have only ever
+failed are never recommended, the reported confidence is always the honest
+bound rather than the random draw, and leaving `explore` off keeps `recommend`
+fully deterministic. Pass `rng=random.Random(seed)` to make draws reproducible
+in tests.
+
+A simple policy that works well: explore while evidence is thin, exploit once
+it is strong.
+
+```python
+rec = memory.recommend(task)
+if rec is None or rec.confidence < 0.6:
+    rec = memory.recommend(task, explore=True)
+```
+
 ## A worked example: an agent that improves
 
 This runnable script shows the whole point of Mimir: consult memory, act, record
@@ -868,7 +897,7 @@ memory = Mimir(storage=MyStorage(), embedder=MyEmbedder(), clusterer=MyClusterer
 | `record_failure(task, action, reason=None, score=0.0, context=None, supersedes=None)` | `Experience` | Store a failure with a reason. |
 | `record_conversation(messages, *, distiller, outcome=None, score=None, context=None)` | `Experience` or `None` | Distill a transcript into one experience. |
 | `recall(query, k=5, outcome=None, context=None, include_superseded=False)` | `list[Experience]` | Most relevant past experiences. |
-| `recommend(task, *, weight_by_relevance=None, include_superseded=False)` | `Recommendation` or `None` | Best-supported action for a task. |
+| `recommend(task, *, weight_by_relevance=None, include_superseded=False, explore=False, rng=None)` | `Recommendation` or `None` | Best-supported action for a task; `explore=True` draws the winner by Thompson sampling. |
 | `supersede(old_id, new_id)` | `bool` | Mark an experience as replaced. |
 | `get(id)` | `Experience` or `None` | Fetch one experience by id. |
 | `delete(id)` | `bool` | Remove one experience. |
