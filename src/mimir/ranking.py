@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 from .models import Experience, Outcome
 
@@ -101,3 +102,15 @@ def beta_lower_bound(
         else:
             hi = mid
     return (lo + hi) / 2.0
+
+
+def beta_sample(
+    successes: float, failures: float, prior: float = 0.5, rng: random.Random | None = None
+) -> float:
+    """One draw from the Beta posterior: Thompson sampling's ranking key.
+
+    Uncertain actions produce spread-out draws that occasionally beat a proven
+    action's tight ones, which is what makes exploration happen.
+    """
+    draw = rng.betavariate if rng is not None else random.betavariate
+    return draw(prior + successes, prior + failures)

@@ -4,6 +4,7 @@ where validation and future provenance hooks live."""
 from __future__ import annotations
 
 import json
+import random
 import threading
 from collections import OrderedDict
 
@@ -11,7 +12,13 @@ from .clustering import ActionClusterer
 from .distill import Distiller, transcript_id
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, Recommendation, utcnow
-from .ranking import beta_lower_bound, default_score, reciprocal_rank_fusion, time_decay
+from .ranking import (
+    beta_lower_bound,
+    beta_sample,
+    default_score,
+    reciprocal_rank_fusion,
+    time_decay,
+)
 from .storage import SQLiteStorage, Storage
 
 
@@ -219,6 +226,8 @@ class Mimir:
         *,
         weight_by_relevance: bool | None = None,
         include_superseded: bool = False,
+        explore: bool = False,
+        rng: random.Random | None = None,
     ) -> Recommendation | None:
         """Suggest the action with the strongest track record on similar tasks.
 
@@ -229,6 +238,13 @@ class Mimir:
         wins, not the confidence: with weighting on, an action proven on closely
         matching tasks outranks an equally confident one proven on loosely related
         ones. Turn weighting off to rank on track record alone.
+
+        With ``explore=True`` the winner is drawn by Thompson sampling: each
+        action's rank is a random draw from its posterior, so promising but
+        less-proven actions win a share of calls proportional to how likely they
+        are to actually be better. Actions with no wins stay excluded, and the
+        reported confidence stays the honest bound. Pass ``rng`` to make the
+        draw reproducible.
         """
         weighted = self.weight_by_relevance if weight_by_relevance is None else weight_by_relevance
         best_stat = None
@@ -241,11 +257,13 @@ class Mimir:
             if stat.success + 0.5 * stat.partial == 0:
                 continue  # never recommend an action with no wins
             # Partial counts as half a success and half a failure.
-            confidence = beta_lower_bound(
-                stat.success + 0.5 * stat.partial, stat.failure + 0.5 * stat.partial
-            )
-            # Rank by confidence scaled by how relevant/recent the evidence is.
-            rank = confidence * (stat.weighted_total / stat.total) if weighted else confidence
+            successes = stat.success + 0.5 * stat.partial
+            failures = stat.failure + 0.5 * stat.partial
+            confidence = beta_lower_bound(successes, failures)
+            # Rank by the bound (exploit) or a posterior draw (explore), scaled
+            # by how relevant/recent the evidence is.
+            score = beta_sample(successes, failures, rng=rng) if explore else confidence
+            rank = score * (stat.weighted_total / stat.total) if weighted else score
             if rank > best_rank:
                 best_rank, best_confidence, best_stat = rank, confidence, stat
         if best_stat is None:

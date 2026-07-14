@@ -1,9 +1,13 @@
 """recommend(): ranking, counts, ablation, action clustering, and time decay."""
 
+import random
 from datetime import timedelta
+
+import pytest
 
 from mimir import Experience, Mimir
 from mimir.models import utcnow
+from mimir.ranking import beta_lower_bound
 
 
 def test_recommend_prefers_more_proven_action(memory):
@@ -254,3 +258,42 @@ def test_decay_works_without_fts(memory):
     seed_stale_vs_recent(memory)
     memory.half_life_days = 30
     assert memory.recommend("api latency").recommended_action == "new approach"
+
+
+def seed_proven_vs_newcomer(memory):
+    for _ in range(20):
+        memory.record("api latency", "proven fix", outcome="success")
+    memory.record("api latency", "newcomer fix", outcome="success")
+    memory.record("api latency", "broken fix", outcome="failure")
+
+
+def explore_picks(memory, n=100):
+    return [
+        memory.recommend("api latency", explore=True, rng=random.Random(i)).recommended_action
+        for i in range(n)
+    ]
+
+
+def test_explore_samples_the_underdog_but_never_a_pure_failure(memory):
+    seed_proven_vs_newcomer(memory)
+    picks = explore_picks(memory)
+    assert set(picks) == {"proven fix", "newcomer fix"}
+
+
+def test_explore_still_favors_the_proven_action(memory):
+    seed_proven_vs_newcomer(memory)
+    picks = explore_picks(memory)
+    assert picks.count("proven fix") > picks.count("newcomer fix")
+
+
+def test_explore_reports_the_honest_bound_not_the_draw(memory):
+    for _ in range(5):
+        memory.record("api latency", "proven fix", outcome="success")
+    rec = memory.recommend("api latency", explore=True, rng=random.Random(0))
+    assert rec.confidence == pytest.approx(beta_lower_bound(5, 0))
+
+
+def test_default_mode_stays_deterministic(memory):
+    seed_proven_vs_newcomer(memory)
+    picks = {memory.recommend("api latency").recommended_action for _ in range(5)}
+    assert picks == {"proven fix"}
