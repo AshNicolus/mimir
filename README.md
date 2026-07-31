@@ -146,11 +146,12 @@ The distribution is named `mimir-learn` on PyPI, but you import it as `mimir`:
 from mimir import Mimir
 ```
 
-Optional extras (keyword recall works without either):
+Optional extras (keyword recall and recommendations work without any of them):
 
 ```bash
 pip install "mimir-learn[embeddings]"  # local embeddings for semantic recall
 pip install "mimir-learn[vector]"      # sqlite-vec ANN index for fast vector search
+pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
 ```
 
 For development:
@@ -189,6 +190,26 @@ for exp in memory.recall("authentication is slow", k=5):
 
 print(memory.recommend("login times out under load"))
 ```
+
+## Give your coding agent a memory (MCP)
+
+Mimir ships an [MCP](https://modelcontextprotocol.io) server, so agents you do
+not write, Claude Code, Codex, Cursor, and any other MCP client, can learn from
+their own history with no code changes:
+
+```bash
+pip install "mimir-learn[mcp]"
+claude mcp add mimir -- mimir-mcp          # or point any MCP client at mimir-mcp
+```
+
+The client gains six tools: `record_experience`, `record_failure`,
+`recall_experiences`, `recommend_action`, `recent_experiences`, and
+`memory_stats`. Memory lives in `~/.mimir/memory.db` (override with
+`MIMIR_DB_PATH`), and because the store is SQLite in WAL mode, several clients
+can share one file safely: what Claude Code learns in the morning is available
+to Codex in the afternoon. See the
+[Playbook](PLAYBOOK.md#sharing-memory-with-claude-code-codex-and-other-mcp-clients)
+for per-client config and the prompt that gets an agent to actually use it.
 
 ## Recommendations
 
@@ -276,7 +297,7 @@ ranking.
 | **3: Reflection engine** | `reflect()`: cluster experiences, synthesize patterns (LLM) | Planned |
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Beta-posterior confidence over relevance/recency-weighted evidence, pluggable action clustering (non-LLM) |
-| **6: Shared org memory** | Multiple agents learn from a shared store | Future |
+| **6: Shared org memory** | Multiple agents learn from a shared store | ✅ MCP server over a shared SQLite file; Postgres backend still future |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
 | **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |

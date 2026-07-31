@@ -70,12 +70,13 @@ The package is named `mimir-learn` on PyPI, but you import it as `mimir`:
 from mimir import Mimir
 ```
 
-Keyword recall and recommendations work with no extra dependencies. Two optional
-extras add semantic search, which you can skip until you need it:
+Keyword recall and recommendations work with no extra dependencies. Three
+optional extras add more, and you can skip them until you need them:
 
 ```bash
 pip install "mimir-learn[embeddings]"  # local embeddings (sentence-transformers, numpy)
 pip install "mimir-learn[vector]"      # sqlite-vec index for fast vector search
+pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
 ```
 
 Mimir needs Python 3.10 or newer and runs on Linux, macOS, and Windows.
@@ -682,6 +683,63 @@ def remembering_tool(task: str, tool):
 
 You now have a memory that spans sessions and even different agents, since it is
 just a shared SQLite file.
+
+### Sharing memory with Claude Code, Codex, and other MCP clients
+
+The integrations above assume you are writing the agent. For coding agents you
+do not control, Mimir ships an [MCP](https://modelcontextprotocol.io) server, so
+any MCP client can record and consult experience without a line of code.
+
+```bash
+pip install "mimir-learn[mcp]"
+```
+
+That installs a `mimir-mcp` console script which serves Mimir over stdio. Point
+your client at it. For Claude Code:
+
+```bash
+claude mcp add mimir -- mimir-mcp
+```
+
+Most other clients take the same JSON shape, in Cursor's `~/.cursor/mcp.json`,
+Claude Desktop's config, or a project `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mimir": {
+      "command": "mimir-mcp",
+      "env": { "MIMIR_DB_PATH": "/Users/you/.mimir/memory.db" }
+    }
+  }
+}
+```
+
+Codex uses TOML in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mimir]
+command = "mimir-mcp"
+```
+
+Six tools are exposed: `record_experience`, `record_failure`,
+`recall_experiences`, `recommend_action`, `recent_experiences`, and
+`memory_stats`. The read-only ones are annotated as such, so clients that ask
+permission only prompt for writes.
+
+The database defaults to `~/.mimir/memory.db`, or `MIMIR_DB_PATH` if set. Point
+several clients at one path and they share a memory: the store runs in SQLite WAL
+mode, whose locking is per-process, so concurrent readers and serialized writers
+work across separate processes just as they do across threads. What Claude Code
+learns in the morning is available to Codex in the afternoon.
+
+To make an agent actually use it, tell it when to. Something like this in your
+`CLAUDE.md` or `AGENTS.md` works:
+
+> Before starting a non-trivial task, call `recommend_action` and
+> `recall_experiences` (with `outcome="failure"`) to see what has and has not
+> worked. After finishing, call `record_experience` with what you did and how it
+> went, or `record_failure` with the reason if it did not work.
 
 ### Semantic recall end to end
 
