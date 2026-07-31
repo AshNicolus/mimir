@@ -52,7 +52,9 @@ SEEDS = [
     Seed("pool-2", "timeouts when traffic spikes", "increase the pool size", "partial"),
     Seed("rate-1", "abusive clients hammer the api", "add a token bucket rate limiter", "success"),
     Seed("rate-2", "throttle noisy tenants", "add a token bucket rate limiter", "success"),
-    Seed("rate-3", "block brute force login attempts", "add a fixed window rate limiter", "failure"),
+    Seed(
+        "rate-3", "block brute force login attempts", "add a fixed window rate limiter", "failure"
+    ),
     Seed("retry-1", "flaky upstream calls fail randomly", "add retries with backoff", "success"),
     Seed("retry-2", "payment webhook drops messages", "add retries with backoff", "success"),
     Seed("deploy-1", "rollout causes downtime", "switch to blue green deploys", "success"),

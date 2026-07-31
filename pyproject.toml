@@ -25,7 +25,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5", "mcp>=2.0"]
+# ruff is pinned so a new release cannot change the lint result under CI.
+# Keep this in step with the version the lint job installs in ci.yml.
+dev = ["pytest>=8.0", "ruff==0.16.1", "mcp>=2.0"]
 # Local semantic search (optional). Keyword recall works without this.
 embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
 # ANN vector index for fast semantic recall. Without it, recall falls back to
@@ -51,3 +53,14 @@ pythonpath = ["."]  # let tests import the benchmarks package
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# Selected explicitly rather than inherited: ruff's defaults change between
+# releases, and a linter upgrade should not turn a green build red on its own.
+[tool.ruff.lint]
+select = [
+    "E4",    # imports
+    "E7",    # statement style
+    "E9",    # syntax and IO errors
+    "F",     # pyflakes
+    "E501",  # keep lines within line-length above
+]
