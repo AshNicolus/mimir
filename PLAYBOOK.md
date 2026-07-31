@@ -686,60 +686,44 @@ just a shared SQLite file.
 
 ### Sharing memory with Claude Code, Codex, and other MCP clients
 
-The integrations above assume you are writing the agent. For coding agents you
-do not control, Mimir ships an [MCP](https://modelcontextprotocol.io) server, so
-any MCP client can record and consult experience without a line of code.
+The integrations above assume you are writing the agent. For coding agents you do
+not control, Mimir ships an [MCP](https://modelcontextprotocol.io) server, so any
+MCP client can record and consult experience without a line of code:
 
 ```bash
 pip install "mimir-learn[mcp]"
+claude mcp add --scope user mimir -- mimir-mcp
 ```
 
-That installs a `mimir-mcp` console script which serves Mimir over stdio. Point
-your client at it. For Claude Code:
+The [README](README.md#give-your-coding-agent-a-memory-mcp) has per-client
+config for Claude Code, Codex, Cursor, and Claude Desktop, plus the prompt that
+gets an agent to actually call the tools. The rest of this section is about
+running the server yourself.
 
-```bash
-claude mcp add mimir -- mimir-mcp
+The `mimir-mcp` script is a thin wrapper. To customize the store, build the
+server in your own process instead:
+
+```python
+from mimir import Mimir
+from mimir.mcp_server import MimirTools, build_server
+
+memory = Mimir("team-memory.db", half_life_days=90, embedder=LocalEmbedder())
+build_server(MimirTools(memory)).run(transport="stdio")
 ```
 
-Most other clients take the same JSON shape, in Cursor's `~/.cursor/mcp.json`,
-Claude Desktop's config, or a project `.mcp.json`:
+`MimirTools` holds the tool bodies as plain methods returning plain dicts, and it
+never imports the MCP SDK, so you can call and test it directly:
 
-```json
-{
-  "mcpServers": {
-    "mimir": {
-      "command": "mimir-mcp",
-      "env": { "MIMIR_DB_PATH": "/Users/you/.mimir/memory.db" }
-    }
-  }
-}
+```python
+tools = MimirTools(Mimir(":memory:"))
+tools.record_experience("fix the deploy", "roll back first", "success")
+assert tools.recommend_action("deploy")["recommended_action"] == "roll back first"
 ```
 
-Codex uses TOML in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.mimir]
-command = "mimir-mcp"
-```
-
-Six tools are exposed: `record_experience`, `record_failure`,
-`recall_experiences`, `recommend_action`, `recent_experiences`, and
-`memory_stats`. The read-only ones are annotated as such, so clients that ask
-permission only prompt for writes.
-
-The database defaults to `~/.mimir/memory.db`, or `MIMIR_DB_PATH` if set. Point
-several clients at one path and they share a memory: the store runs in SQLite WAL
-mode, whose locking is per-process, so concurrent readers and serialized writers
-work across separate processes just as they do across threads. What Claude Code
-learns in the morning is available to Codex in the afternoon.
-
-To make an agent actually use it, tell it when to. Something like this in your
-`CLAUDE.md` or `AGENTS.md` works:
-
-> Before starting a non-trivial task, call `recommend_action` and
-> `recall_experiences` (with `outcome="failure"`) to see what has and has not
-> worked. After finishing, call `record_experience` with what you did and how it
-> went, or `record_failure` with the reason if it did not work.
+Two guards worth knowing about, since the caller is a language model rather than
+your code: `k` and `n` are clamped, so a runaway request cannot flood the client's
+context, and stored embeddings are left out of tool output because hundreds of
+floats are of no use to a client.
 
 ### Semantic recall end to end
 
