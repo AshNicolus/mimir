@@ -14,7 +14,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install ruff
+        # Pinned to match the dev extra in pyproject.toml, so a new ruff
+        # release cannot fail the build on its own.
+        run: pip install ruff==0.16.1
       - name: Ruff
         run: ruff check .
 

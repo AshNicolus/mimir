@@ -94,7 +94,9 @@ def time_ms(fn, n):
 
 def main():
     store, record_seconds = build_store()
-    recall_p50, recall_p95 = time_ms(lambda: store.recall("latency under load service", k=5), N_RECALL)
+    recall_p50, recall_p95 = time_ms(
+        lambda: store.recall("latency under load service", k=5), N_RECALL
+    )
     recommend_p50, _ = time_ms(lambda: store.recommend("latency under load"), N_RECOMMEND)
     store.close()
 

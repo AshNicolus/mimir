@@ -35,7 +35,8 @@ class Experience(BaseModel):
     task: str  # the problem being solved
     action: str  # what was actually done
     outcome: Outcome = Outcome.SUCCESS
-    score: float = Field(default=1.0, ge=0.0, le=1.0)  # how well it went: high for success, low for failure
+    # how well it went: high for success, low for failure
+    score: float = Field(default=1.0, ge=0.0, le=1.0)
     context: dict = Field(default_factory=dict)  # env, tags, agent_id, domain, ...
     embedding: list[float] | None = None  # set only when an embedder is configured
     created_at: datetime = Field(default_factory=utcnow)

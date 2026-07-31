@@ -45,7 +45,8 @@ def main():
 
     rows += [
         "",
-        "_Same-runner comparison, informational only. CI does not fail on regressions (CI timing is noisy)._",
+        "_Same-runner comparison, informational only. "
+        "CI does not fail on regressions (CI timing is noisy)._",
     ]
     print("\n".join(rows))
 

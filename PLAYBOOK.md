@@ -70,12 +70,13 @@ The package is named `mimir-learn` on PyPI, but you import it as `mimir`:
 from mimir import Mimir
 ```
 
-Keyword recall and recommendations work with no extra dependencies. Two optional
-extras add semantic search, which you can skip until you need it:
+Keyword recall and recommendations work with no extra dependencies. Three
+optional extras add more, and you can skip them until you need them:
 
 ```bash
 pip install "mimir-learn[embeddings]"  # local embeddings (sentence-transformers, numpy)
 pip install "mimir-learn[vector]"      # sqlite-vec index for fast vector search
+pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
 ```
 
 Mimir needs Python 3.10 or newer and runs on Linux, macOS, and Windows.
@@ -682,6 +683,47 @@ def remembering_tool(task: str, tool):
 
 You now have a memory that spans sessions and even different agents, since it is
 just a shared SQLite file.
+
+### Sharing memory with Claude Code, Codex, and other MCP clients
+
+The integrations above assume you are writing the agent. For coding agents you do
+not control, Mimir ships an [MCP](https://modelcontextprotocol.io) server, so any
+MCP client can record and consult experience without a line of code:
+
+```bash
+pip install "mimir-learn[mcp]"
+claude mcp add --scope user mimir -- mimir-mcp
+```
+
+The [README](README.md#give-your-coding-agent-a-memory-mcp) has per-client
+config for Claude Code, Codex, Cursor, and Claude Desktop, plus the prompt that
+gets an agent to actually call the tools. The rest of this section is about
+running the server yourself.
+
+The `mimir-mcp` script is a thin wrapper. To customize the store, build the
+server in your own process instead:
+
+```python
+from mimir import Mimir
+from mimir.mcp_server import MimirTools, build_server
+
+memory = Mimir("team-memory.db", half_life_days=90, embedder=LocalEmbedder())
+build_server(MimirTools(memory)).run(transport="stdio")
+```
+
+`MimirTools` holds the tool bodies as plain methods returning plain dicts, and it
+never imports the MCP SDK, so you can call and test it directly:
+
+```python
+tools = MimirTools(Mimir(":memory:"))
+tools.record_experience("fix the deploy", "roll back first", "success")
+assert tools.recommend_action("deploy")["recommended_action"] == "roll back first"
+```
+
+Two guards worth knowing about, since the caller is a language model rather than
+your code: `k` and `n` are clamped, so a runaway request cannot flood the client's
+context, and stored embeddings are left out of tool output because hundreds of
+floats are of no use to a client.
 
 ### Semantic recall end to end
 

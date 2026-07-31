@@ -1,9 +1,12 @@
 """record() and recall(): keyword, hybrid, filters, and scaling."""
 
+from datetime import timedelta
+
 import pytest
 
-from mimir import Mimir, Outcome
+from mimir import Experience, Mimir, Outcome
 from mimir.embeddings import Embedder
+from mimir.models import utcnow
 
 
 def test_record_and_count(memory):
@@ -121,12 +124,8 @@ def test_recall_without_embeddings_misses_semantic_only_match(memory):
 
 
 def record_aged(memory, task, action, days_ago):
-    from datetime import timedelta
-
-    from mimir import Experience
-    from mimir.models import utcnow
-
-    memory.write(Experience(task=task, action=action, created_at=utcnow() - timedelta(days=days_ago)))
+    created = utcnow() - timedelta(days=days_ago)
+    memory.write(Experience(task=task, action=action, created_at=created))
 
 
 def test_recall_without_half_life_ignores_age(memory):
@@ -148,11 +147,13 @@ def test_recall_with_half_life_prefers_the_recent_experience():
 
 
 def test_search_scores_rank_stronger_matches_higher(memory):
-    memory.record("fix login latency under load", "add a redis cache")
-    memory.record("unrelated gardening chores with latency", "water the plants")
+    strong = "fix login latency under load"
+    weak = "unrelated gardening chores with latency"
+    memory.record(strong, "add a redis cache")
+    memory.record(weak, "water the plants")
 
     scores = {exp.task: score for exp, score in memory.storage.search("login latency", k=5)}
-    assert scores["fix login latency under load"] > scores["unrelated gardening chores with latency"]
+    assert scores[strong] > scores[weak]
 
 
 def test_search_with_zero_limit_returns_empty(memory):

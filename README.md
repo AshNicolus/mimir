@@ -146,11 +146,12 @@ The distribution is named `mimir-learn` on PyPI, but you import it as `mimir`:
 from mimir import Mimir
 ```
 
-Optional extras (keyword recall works without either):
+Optional extras (keyword recall and recommendations work without any of them):
 
 ```bash
 pip install "mimir-learn[embeddings]"  # local embeddings for semantic recall
 pip install "mimir-learn[vector]"      # sqlite-vec ANN index for fast vector search
+pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
 ```
 
 For development:
@@ -189,6 +190,114 @@ for exp in memory.recall("authentication is slow", k=5):
 
 print(memory.recommend("login times out under load"))
 ```
+
+## Give your coding agent a memory (MCP)
+
+Claude Code, Codex, and Cursor start every session knowing nothing about the last
+one. Mimir ships an [MCP](https://modelcontextprotocol.io) server, so any MCP
+client can record what it tried and consult that track record later, with no code
+changes on your side. Three steps.
+
+### 1. Install
+
+```bash
+pip install "mimir-learn[mcp]"
+```
+
+This adds a `mimir-mcp` command that serves Mimir over stdio. Your MCP client has
+to be able to find that command, so if you installed into a project virtualenv,
+either use its absolute path in the config below or install it globally instead:
+
+```bash
+uv tool install "mimir-learn[mcp]"    # or: pipx install "mimir-learn[mcp]"
+```
+
+### 2. Connect your agent
+
+**Claude Code** (the CLI does it for you; `--scope user` makes it available in
+every project rather than just this one):
+
+```bash
+claude mcp add --scope user mimir -- mimir-mcp
+claude mcp list                       # confirm it connects
+```
+
+**Codex**, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mimir]
+command = "mimir-mcp"
+```
+
+**Cursor**, in `~/.cursor/mcp.json` for every project, or `.cursor/mcp.json` for
+one. **Claude Desktop** uses the same shape in
+`claude_desktop_config.json`, as do most other clients:
+
+```json
+{
+  "mcpServers": {
+    "mimir": {
+      "command": "mimir-mcp"
+    }
+  }
+}
+```
+
+To share one memory across machines or keep separate stores per project, set the
+path explicitly:
+
+```json
+{
+  "mcpServers": {
+    "mimir": {
+      "command": "mimir-mcp",
+      "env": { "MIMIR_DB_PATH": "/Users/you/.mimir/memory.db" }
+    }
+  }
+}
+```
+
+### 3. Tell the agent to use it
+
+Connecting only makes the tools available; the agent still needs to know when to
+reach for them. Put something like this in your `CLAUDE.md`, `AGENTS.md`, or
+Cursor rules:
+
+> Before starting a non-trivial task, call `recommend_action` for the task, and
+> `recall_experiences` with `outcome="failure"` to see what has already failed.
+> After finishing, call `record_experience` with what you did and how it went, or
+> `record_failure` with the reason if it did not work.
+
+### What the agent gets
+
+| Tool | What it does |
+|---|---|
+| `recommend_action` | The action with the best track record, plus a confidence you can threshold on |
+| `recall_experiences` | Relevant past attempts, filterable to just the failures |
+| `record_experience` | Store what was tried and how it turned out |
+| `record_failure` | Store a dead end with the reason, so it is not repeated |
+| `recent_experiences` | The newest entries, for a quick look at what has been learned |
+| `memory_stats` | How many experiences are stored, and where |
+
+The read-only tools are annotated as such, so clients that ask permission per
+tool only prompt you for writes.
+
+### One memory, many tools
+
+Memory lives in `~/.mimir/memory.db` unless `MIMIR_DB_PATH` says otherwise. Point
+several clients at the same path and they genuinely share it: the store is SQLite
+in WAL mode, whose locking is per-process rather than per-thread, so concurrent
+readers and serialized writers work across separate client processes. What Claude
+Code learns in the morning, Codex has in the afternoon.
+
+If a client reports the server failing to start, it is almost always that
+`mimir-mcp` is not on the PATH that client inherits. Run `which mimir-mcp`
+(`where` on Windows) and paste the absolute path into `command`.
+
+To serve a store with embeddings, a half-life, or a custom backend, build the
+server in your own process; the
+[Playbook](PLAYBOOK.md#sharing-memory-with-claude-code-codex-and-other-mcp-clients)
+shows how.
 
 ## Recommendations
 
@@ -276,7 +385,7 @@ ranking.
 | **3: Reflection engine** | `reflect()`: cluster experiences, synthesize patterns (LLM) | Planned |
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Beta-posterior confidence over relevance/recency-weighted evidence, pluggable action clustering (non-LLM) |
-| **6: Shared org memory** | Multiple agents learn from a shared store | Future |
+| **6: Shared org memory** | Multiple agents learn from a shared store | ✅ MCP server over a shared SQLite file; Postgres backend still future |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
 | **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |
