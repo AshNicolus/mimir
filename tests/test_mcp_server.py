@@ -100,6 +100,51 @@ def test_parse_outcome_accepts_valid_values():
     assert parse_outcome("partial").value == "partial"
 
 
+# A language model is the caller, so a rejected argument has to say what to send
+# instead, without leaking internal model names or linking to library docs.
+def test_blank_task_or_action_is_rejected_in_the_callers_terms(tools):
+    for field, args in [("task", ("   ", "an action")), ("action", ("a task", ""))]:
+        with pytest.raises(ValueError, match=f"{field} must be a non-empty description"):
+            tools.record_experience(*args)
+        with pytest.raises(ValueError, match=f"{field} must be a non-empty description"):
+            tools.record_failure(*args)
+
+
+def test_out_of_range_score_names_the_range(tools):
+    with pytest.raises(ValueError, match="score must be between 0 and 1"):
+        tools.record_experience("a task", "an action", score=42.0)
+
+
+def test_non_numeric_score_is_rejected(tools):
+    with pytest.raises(ValueError, match="score must be a number"):
+        tools.record_experience("a task", "an action", score="high")
+
+
+def test_non_object_context_is_rejected(tools):
+    with pytest.raises(ValueError, match="context must be an object"):
+        tools.record_experience("a task", "an action", context=["not", "a", "dict"])
+
+
+def test_input_errors_do_not_leak_library_internals(tools):
+    with pytest.raises(ValueError) as caught:
+        tools.record_experience("  ", "an action")
+    message = str(caught.value)
+    assert "pydantic" not in message.lower()
+    assert "Experience" not in message
+
+
+def test_contradicting_score_is_reported_back_to_the_caller(tools):
+    # The warning would otherwise go to the server's stderr, where no client
+    # can see that it stored something self-contradictory.
+    result = tools.record_experience("a task", "an action", outcome="failure", score=0.95)
+    assert result["outcome"] == "failure"
+    assert any("contradicts" in w for w in result["warnings"])
+
+
+def test_consistent_record_reports_no_warnings(tools):
+    assert "warnings" not in tools.record_experience("a task", "an action", outcome="success")
+
+
 def test_clamp_bounds_values():
     assert clamp(0, 1, 50) == 1
     assert clamp(99, 1, 50) == 50

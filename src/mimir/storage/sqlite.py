@@ -12,6 +12,7 @@ import os
 import re
 import sqlite3
 import threading
+import warnings
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -30,6 +31,10 @@ from .query import bm25_to_score, context_matches, context_sql_filters, query_te
 
 VEC_DIM_PATTERN = re.compile(r"float\[(\d+)\]")
 KNN_OVERFETCH = 8  # KNN can't filter inline, so fetch extra and filter after
+
+
+class VectorIndexWarning(UserWarning):
+    """An embedding could not be added to the vector index."""
 
 
 class SQLiteStorage(Storage):
@@ -51,6 +56,7 @@ class SQLiteStorage(Storage):
         self.readers = threading.local()
         self.clusters: dict[str, str] | None = None  # action_norm -> representative
         self.vec_dim: int | None = None
+        self.warned_vec_dim = False
         self.conn = self.open_connection(load_extension=False)
         self.vec_enabled = self.load_vec(self.conn)
         self.math_enabled = self.detect_math()
@@ -163,6 +169,24 @@ class SQLiteStorage(Storage):
         )
         self.vec_dim = dim
 
+    def warn_vec_dim(self, dim: int) -> None:
+        """Warn once that an embedding cannot join the ANN index.
+
+        The index is fixed to the first dimension it saw, so changing embedder
+        silently drops new rows out of it and leaves recall on the slower cosine
+        scan. Results stay correct, which is exactly why this needs saying.
+        """
+        if self.warned_vec_dim:
+            return
+        self.warned_vec_dim = True
+        warnings.warn(
+            f"embedding has {dim} dimensions but the vector index holds "
+            f"{self.vec_dim}; new rows will not be indexed and recall falls back "
+            "to a full scan. Rebuild the store to index the new embedder.",
+            VectorIndexWarning,
+            stacklevel=4,
+        )
+
     def backfill_vec(self) -> None:
         # Rows embedded before the extension was installed exist only as JSON.
         rows = self.conn.execute(
@@ -174,6 +198,7 @@ class SQLiteStorage(Storage):
                 continue
             self.ensure_vec_table(len(vec))
             if len(vec) != self.vec_dim:
+                self.warn_vec_dim(len(vec))  # a store holding mixed dimensions
                 continue
             self.conn.execute(
                 "INSERT INTO vec_experiences(experience_id, embedding) VALUES (?, ?)",
@@ -217,6 +242,8 @@ class SQLiteStorage(Storage):
                         "INSERT INTO vec_experiences(experience_id, embedding) VALUES (?, ?)",
                         (exp.id, sqlite_vec.serialize_float32([float(x) for x in exp.embedding])),
                     )
+                else:
+                    self.warn_vec_dim(len(exp.embedding))
 
     def delete(self, experience_id: str) -> bool:
         with self.writing() as conn:
