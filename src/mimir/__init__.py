@@ -7,7 +7,7 @@ from .core import Mimir
 from .distill import CallableDistiller, Distiller, Draft
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, OutcomeScoreWarning, Recommendation
-from .storage import SQLiteStorage, Storage
+from .storage import SQLiteStorage, Storage, VectorIndexWarning
 
 try:
     __version__ = version("mimir-learn")
@@ -19,6 +19,7 @@ __all__ = [
     "Experience",
     "Outcome",
     "OutcomeScoreWarning",
+    "VectorIndexWarning",
     "Recommendation",
     "Storage",
     "SQLiteStorage",

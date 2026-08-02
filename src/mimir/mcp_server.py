@@ -15,11 +15,12 @@ that exposes those methods as MCP tools.
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 from typing import Any
 
 from .core import Mimir
-from .models import Experience, Outcome, Recommendation
+from .models import Experience, Outcome, OutcomeScoreWarning, Recommendation
 
 DEFAULT_DB_PATH = Path.home() / ".mimir" / "memory.db"
 MAX_RECALL = 50  # keep a runaway k from flooding the client's context
@@ -47,9 +48,39 @@ def clamp(value: int, low: int, high: int) -> int:
     return max(low, min(value, high))
 
 
-def experience_to_dict(exp: Experience) -> dict[str, Any]:
+def require_text(field: str, value: str) -> str:
+    """Validate a required text field in the caller's terms.
+
+    Pydantic would also catch this, but its message names internal models and
+    links to its own docs, which is noise to the language model that has to
+    correct the call.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty description, got {value!r}")
+    return value
+
+
+def check_score(score: float | None) -> float | None:
+    if score is None:
+        return None
+    if not isinstance(score, (int, float)) or isinstance(score, bool):
+        raise ValueError(f"score must be a number between 0 and 1, got {score!r}")
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"score must be between 0 and 1, got {score}")
+    return float(score)
+
+
+def check_context(context: dict | None) -> dict | None:
+    if context is None:
+        return None
+    if not isinstance(context, dict):
+        raise ValueError(f"context must be an object of tags, got {type(context).__name__}")
+    return context
+
+
+def experience_to_dict(exp: Experience, warnings_caught: list | None = None) -> dict[str, Any]:
     # The embedding is deliberately left out: hundreds of floats no client can use.
-    return {
+    payload = {
         "id": exp.id,
         "task": exp.task,
         "action": exp.action,
@@ -59,6 +90,9 @@ def experience_to_dict(exp: Experience) -> dict[str, Any]:
         "created_at": exp.created_at.isoformat(),
         "superseded": exp.superseded_by is not None,
     }
+    if warnings_caught:
+        payload["warnings"] = [str(w.message) for w in warnings_caught]
+    return payload
 
 
 def recommendation_to_dict(rec: Recommendation) -> dict[str, Any]:
@@ -87,14 +121,19 @@ class MimirTools:
         score: float | None = None,
         context: dict | None = None,
     ) -> dict[str, Any]:
-        exp = self.memory.record(
-            task=task,
-            action=action,
-            outcome=parse_outcome(outcome),
-            score=score,
-            context=context,
-        )
-        return experience_to_dict(exp)
+        parsed = parse_outcome(outcome)
+        # Warnings go to the server's stderr, which no client ever sees, so
+        # catch them and hand them back where the caller can act on them.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", OutcomeScoreWarning)
+            exp = self.memory.record(
+                task=require_text("task", task),
+                action=require_text("action", action),
+                outcome=parsed,
+                score=check_score(score),
+                context=check_context(context),
+            )
+        return experience_to_dict(exp, warnings_caught=caught)
 
     def record_failure(
         self,
@@ -103,7 +142,12 @@ class MimirTools:
         reason: str | None = None,
         context: dict | None = None,
     ) -> dict[str, Any]:
-        exp = self.memory.record_failure(task=task, action=action, reason=reason, context=context)
+        exp = self.memory.record_failure(
+            task=require_text("task", task),
+            action=require_text("action", action),
+            reason=reason,
+            context=check_context(context),
+        )
         return experience_to_dict(exp)
 
     def recall_experiences(

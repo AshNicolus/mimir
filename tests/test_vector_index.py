@@ -5,9 +5,11 @@ or this Python's sqlite3 can't load extensions, where recall uses the cosine
 fallback covered in test_mimir.py.
 """
 
+import warnings
+
 import pytest
 
-from mimir import Mimir
+from mimir import Mimir, VectorIndexWarning
 from mimir.embeddings import Embedder
 
 
@@ -166,3 +168,51 @@ def test_ann_backfills_existing_json_embeddings(tmp_path):
         assert results and results[0].task == "adopt a feline companion"
     finally:
         reopened.close()
+
+
+class WideEmbedder(Embedder):
+    """A different embedder with a different dimension, as if the model changed."""
+
+    def embed(self, text):
+        return [1.0, 0.0, 0.0, 0.0]
+
+
+def mismatched_store(tmp_path, name):
+    """A store indexed at 3 dimensions, reopened with a 4-dimension embedder."""
+    db = str(tmp_path / name)
+    first = Mimir(db, embedder=TopicEmbedder())
+    if not first.storage.vec_enabled:
+        first.close()
+        pytest.skip("sqlite-vec not available")
+    first.record("adopt a feline companion", "visit the shelter")
+    first.close()
+    return Mimir(db, embedder=WideEmbedder())
+
+
+def test_changing_embedder_dimension_warns_instead_of_silently_dropping(tmp_path):
+    # Recall still works through the cosine fallback, so this warning is the only
+    # signal that the index has stopped accepting rows.
+    memory = mismatched_store(tmp_path, "dim.db")
+    try:
+        with pytest.warns(VectorIndexWarning, match="4 dimensions"):
+            memory.record("buy a canine leash", "go to the pet store")
+        indexed = memory.storage.conn.execute(
+            "SELECT COUNT(*) FROM vec_experiences"
+        ).fetchone()[0]
+        assert indexed == 1  # the new row stayed out of the index
+        assert memory.recall("leash")  # but recall still finds it
+    finally:
+        memory.close()
+
+
+def test_dimension_warning_is_not_repeated_for_every_write(tmp_path):
+    memory = mismatched_store(tmp_path, "dim-once.db")
+    try:
+        with pytest.warns(VectorIndexWarning):
+            memory.record("first mismatch", "an action")
+        with warnings.catch_warnings(record=True) as later:
+            warnings.simplefilter("always")
+            memory.record("second mismatch", "an action")
+        assert not [w for w in later if issubclass(w.category, VectorIndexWarning)]
+    finally:
+        memory.close()

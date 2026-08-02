@@ -490,6 +490,12 @@ Mimir falls back to a plain Python cosine scan, which is faster when numpy is
 present. The results are identical either way, so you can develop without the
 extra and add it later when the store grows.
 
+The index is fixed to the dimension of the first embedding it sees. Swap in an
+embedder with a different dimension and new rows cannot join it, so Mimir raises
+a `VectorIndexWarning`: recall still returns the right answers through the cosine
+scan, but it is no longer using the index. Rebuild the store to re-index under
+the new embedder.
+
 ### The query embedding cache
 
 Every `recall` embeds the query text, and embedding is the expensive step with a
@@ -720,10 +726,17 @@ tools.record_experience("fix the deploy", "roll back first", "success")
 assert tools.recommend_action("deploy")["recommended_action"] == "roll back first"
 ```
 
-Two guards worth knowing about, since the caller is a language model rather than
-your code: `k` and `n` are clamped, so a runaway request cannot flood the client's
-context, and stored embeddings are left out of tool output because hundreds of
-floats are of no use to a client.
+The tools are shaped around the fact that a language model, not your code, is
+calling them:
+
+- `k` and `n` are clamped, so a runaway request cannot flood the client's context.
+- Stored embeddings are left out of tool output, because hundreds of floats are of
+  no use to a client.
+- A rejected argument says what to send instead ("score must be between 0 and 1"),
+  rather than surfacing a validation error written for library authors.
+- A record whose score contradicts its outcome still lands, but the response
+  carries a `warnings` list saying so. The same check writes to stderr in library
+  use, where nobody reading through MCP would ever see it.
 
 ### Semantic recall end to end
 
