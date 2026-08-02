@@ -296,7 +296,7 @@ Read it as a conservative success rate. Some intuition:
 
 - 1 success out of 1 gives about 0.23. One data point is barely evidence.
 - 8 out of 8 gives about 0.79. A clean track record earns real confidence.
-- 90 out of 100 gives about 0.83. More consistent evidence tightens the estimate.
+- 90 out of 100 gives about 0.84. More consistent evidence tightens the estimate.
 - An action that has only ever failed is never recommended.
 
 The number means the same thing no matter how the query was phrased, so you can
