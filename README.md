@@ -403,7 +403,7 @@ Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
 ## Status
 
-Alpha, and **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/) (the badge above shows the current release).
+Beta, and **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/) (the badge above shows the current release).
 
 What works today, with no LLM anywhere in the read or write path:
 
