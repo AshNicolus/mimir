@@ -76,7 +76,7 @@ past = memory.recall("authentication latency")
 
 # Get a recommended strategy with confidence
 strategy = memory.recommend("login timeout")
-# → Strategy: "Redis caching"  |  confidence: 0.87  |  based on 23 successes / 2 failures
+# -> Strategy: "Redis caching"  |  confidence: 0.80  |  based on 23 successes / 2 failures
 ```
 
 ## How it differs from AGENTS.md / CLAUDE.md
@@ -162,7 +162,7 @@ cd mimir
 pip install -e ".[dev]"
 ```
 
-**Requirements:** Python 3.10+, tested on 3.10, 3.11, and 3.12 (Linux, macOS, Windows). This matters for agents, which often run on the Python version their host ships, and 3.10 is still the default on several current Linux distributions. v1 has no required external services: storage is a local SQLite file. Semantic search and reflection are optional extras.
+**Requirements:** Python 3.10 or newer, tested in CI on 3.10 through 3.14 (Linux, macOS, Windows). Supporting the older end matters for agents, which run on whatever Python their host ships, and 3.10 is still the default on several current Linux distributions. There are no required external services: storage is a local SQLite file, and semantic search is an optional extra.
 
 ## Quick start
 
@@ -390,7 +390,7 @@ ranking.
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
 | **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |
 | **Concurrency** | Per-thread connections so reads scale under WAL, writes serialized | ✅ Done |
-| **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows |  Python 3.10–3.12 |
+| **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows | ✅ Python 3.10 and newer |
 
 ## Scaling path
 
@@ -403,7 +403,19 @@ Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
 ## Status
 
-Alpha (`0.1.4`): **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/). Episodic and failure memory are complete and tested, and the recommendation engine works today via Beta-posterior confidence over relevance/recency-weighted evidence, with pluggable action clustering (no LLM). Recall is hybrid keyword + vector (optional sqlite-vec ANN index), backed by schema versioning with a migration runner, concurrent reads under WAL, experience superseding and time decay for staleness, a query-embedding cache, and a recall@k / recommendation-accuracy eval gate in CI. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
+Alpha, and **published on PyPI** as [`mimir-learn`](https://pypi.org/project/mimir-learn/) (the badge above shows the current release).
+
+What works today, with no LLM anywhere in the read or write path:
+
+- **Episodic and failure memory**, complete and tested.
+- **Recommendations** ranked by a Beta-posterior confidence over relevance and recency weighted evidence, with pluggable action clustering, plus an opt-in Thompson-sampling explore mode.
+- **Hybrid recall**, keyword and vector fused, with an optional sqlite-vec index and a query-embedding cache.
+- **Staleness handling** through explicit superseding and optional time decay.
+- **An MCP server**, so Claude Code, Codex, and Cursor can share one memory without any code.
+- **Conversation distillation** behind a pluggable seam, for turning a finished transcript into an experience.
+- **Reliability**: versioned schema with a migration runner, concurrent reads under WAL, and a recall@k / recommendation-accuracy gate in CI.
+
+Not built yet: the LLM reflection engine, materialized strategy rows, and the Postgres backend for multi-agent writes. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
