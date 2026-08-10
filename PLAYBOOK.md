@@ -26,11 +26,12 @@ is no server and no LLM to run, and the only required dependency is Pydantic.
 12. [Persistence, concurrency, and lifecycle](#persistence-concurrency-and-lifecycle)
 13. [Integrations](#integrations)
 14. [Distilling conversations into experiences](#distilling-conversations-into-experiences)
-15. [Patterns and best practices](#patterns-and-best-practices)
-16. [Testing your integration](#testing-your-integration)
-17. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-18. [Extending Mimir](#extending-mimir)
-19. [API reference](#api-reference)
+15. [Reflecting across experiences](#reflecting-across-experiences)
+16. [Patterns and best practices](#patterns-and-best-practices)
+17. [Testing your integration](#testing-your-integration)
+18. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+19. [Extending Mimir](#extending-mimir)
+20. [API reference](#api-reference)
 
 ## What Mimir is
 
@@ -843,6 +844,81 @@ Let the distiller fill in the outcome only when you have no better signal; a
 test result or an exit code is always worth more than the model's own reading
 of how the conversation went.
 
+## Reflecting across experiences
+
+`recommend` tells you which action has won most often. It does not tell you
+why, or what several related strategies have in common. `reflect` looks at a
+set of experiences and writes down the pattern:
+
+```python
+memory.reflect("login latency", reflector=my_reflector)
+```
+
+It recalls up to `k` experiences for the query (50 by default, more than
+`recall`'s own default, since a reflection benefits from seeing more evidence
+at once), hands them to a `Reflector`, and stores whatever comes back as a
+`Reflection`: a `summary`, a `pattern`, and the ids of the experiences it was
+built from. Reflecting on the same set of experiences again replaces the
+earlier reflection instead of duplicating it, the same way re-recording a
+transcript does.
+
+A reflection is derived knowledge, not a source of truth. It does not feed
+back into `recall` or `recommend` on its own; it is something you or an agent
+reads. That keeps it honestly rebuildable: if the underlying experiences
+change, or the reflector improves, reflecting again simply replaces it.
+
+### Writing a reflector
+
+Any `experiences -> ReflectionDraft | None` function works, same shape as a
+distiller. Here is one backed by the Anthropic SDK:
+
+```python
+import json
+from anthropic import Anthropic
+from mimir import CallableReflector
+from mimir.reflect import ReflectionDraft
+
+client = Anthropic()
+
+PROMPT = (
+    "These are past experiences on a related task. Summarize what they have "
+    "in common and name one reusable pattern. Reply with JSON: "
+    '{"summary": one sentence, "pattern": one sentence}.'
+)
+
+def reflect(experiences):
+    lines = [f"- {e.outcome.value}: {e.action}" for e in experiences]
+    reply = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=300,
+        messages=[{"role": "user", "content": f"{PROMPT}\n\n" + "\n".join(lines)}],
+    )
+    data = json.loads(reply.content[0].text)
+    return ReflectionDraft(**data)
+
+reflector = CallableReflector(reflect, name="claude-sonnet-5")
+```
+
+Feed it outcomes, not just actions. "add a redis cache: 8 success, 1 failure"
+is what makes a reflection worth reading; a list of actions with no outcomes
+is just a summary of what was tried, not what worked.
+
+### Reading reflections back
+
+```python
+reflection = memory.reflect("login latency", reflector=reflector)
+print(reflection.summary)
+print(reflection.pattern)
+print(reflection.supporting_experience_ids)
+
+memory.get_reflection(reflection.id)
+memory.recent_reflections(5)
+```
+
+`reflect` returns `None` when there is nothing to reflect on (no matching
+experiences) or when the reflector abstains, same convention as a distiller
+returning `None`.
+
 ## Patterns and best practices
 
 - Close the loop every time. The value compounds only if you record outcomes,
@@ -953,10 +1029,13 @@ memory = Mimir(storage=MyStorage(), embedder=MyEmbedder(), clusterer=MyClusterer
 | `record_conversation(messages, *, distiller, outcome=None, score=None, context=None)` | `Experience` or `None` | Distill a transcript into one experience. |
 | `recall(query, k=5, outcome=None, context=None, include_superseded=False)` | `list[Experience]` | Most relevant past experiences. |
 | `recommend(task, *, weight_by_relevance=None, include_superseded=False, explore=False, rng=None)` | `Recommendation` or `None` | Best-supported action for a task; `explore=True` draws the winner by Thompson sampling. |
+| `reflect(query, *, reflector, k=50, include_superseded=False)` | `Reflection` or `None` | Synthesize a pattern across recalled experiences. |
 | `supersede(old_id, new_id)` | `bool` | Mark an experience as replaced. |
 | `get(id)` | `Experience` or `None` | Fetch one experience by id. |
+| `get_reflection(id)` | `Reflection` or `None` | Fetch one reflection by id. |
 | `delete(id)` | `bool` | Remove one experience. |
 | `recent(n=10)` | `list[Experience]` | The `n` newest experiences. |
+| `recent_reflections(n=10)` | `list[Reflection]` | The `n` newest reflections. |
 | `count()` | `int` | Total stored experiences. |
 | `write(exp)` | `Experience` | Low-level single write path. |
 | `close()` | `None` | Release resources, or use `with`. |
@@ -981,3 +1060,12 @@ A `Distiller` implements `distill(messages) -> Draft | None`, where `None`
 abstains. `CallableDistiller(fn, name="...")` wraps a plain function. A `Draft`
 holds `task`, `action`, optional `outcome` and `score`, and a `context` dict;
 `record_conversation` merges it with ground truth and provenance before writing.
+
+### `Reflector` and `Reflection`
+
+A `Reflector` implements `reflect(experiences) -> ReflectionDraft | None`,
+where `None` abstains. `CallableReflector(fn, name="...")` wraps a plain
+function. A `ReflectionDraft` holds `summary` and `pattern`; `reflect` adds an
+id derived from the supporting experiences, so reflecting on an unchanged set
+replaces rather than duplicates, and stores it as a `Reflection`: `id`,
+`summary`, `pattern`, `supporting_experience_ids`, `created_at`.

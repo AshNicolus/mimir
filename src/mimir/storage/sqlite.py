@@ -25,6 +25,7 @@ from ..clustering import ActionClusterer, Cluster, ExactClusterer
 from ..embeddings import cosine_similarity
 from ..models import Experience, Outcome, utcnow
 from ..ranking import time_decay
+from ..reflect import Reflection
 from .base import ActionStat, Storage
 from .migrations import run_migrations
 from .query import bm25_to_score, context_matches, context_sql_filters, query_terms, tokenize
@@ -287,6 +288,44 @@ class SQLiteStorage(Storage):
     def count(self) -> int:
         with self.reading() as conn:
             return conn.execute("SELECT COUNT(*) FROM experiences").fetchone()[0]
+
+    def add_reflection(self, reflection: Reflection) -> None:
+        with self.writing() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO reflections "
+                "(id, summary, pattern, supporting_experience_ids, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    reflection.id,
+                    reflection.summary,
+                    reflection.pattern,
+                    json.dumps(reflection.supporting_experience_ids),
+                    reflection.created_at.isoformat(),
+                ),
+            )
+
+    def get_reflection(self, reflection_id: str) -> Reflection | None:
+        with self.reading() as conn:
+            row = conn.execute(
+                "SELECT * FROM reflections WHERE id = ?", (reflection_id,)
+            ).fetchone()
+        return self.row_to_reflection(row) if row else None
+
+    def recent_reflections(self, n: int = 10) -> list[Reflection]:
+        with self.reading() as conn:
+            rows = conn.execute(
+                "SELECT * FROM reflections ORDER BY created_at DESC, rowid DESC LIMIT ?", (n,)
+            ).fetchall()
+        return [self.row_to_reflection(r) for r in rows]
+
+    def row_to_reflection(self, row: sqlite3.Row) -> Reflection:
+        return Reflection.model_construct(
+            id=row["id"],
+            summary=row["summary"],
+            pattern=row["pattern"],
+            supporting_experience_ids=json.loads(row["supporting_experience_ids"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
 
     def known_clusters(self) -> list[Cluster]:
         # Loaded once, then kept in step by add() and invalidated by delete(),

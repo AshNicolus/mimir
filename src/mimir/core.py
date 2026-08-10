@@ -19,6 +19,7 @@ from .ranking import (
     reciprocal_rank_fusion,
     time_decay,
 )
+from .reflect import Reflection, Reflector, reflection_id
 from .storage import SQLiteStorage, Storage
 
 
@@ -280,6 +281,45 @@ class Mimir:
                 task, best_stat.key, include_superseded=include_superseded
             ),
         )
+
+    def reflect(
+        self,
+        query: str,
+        *,
+        reflector: Reflector,
+        k: int = 50,
+        include_superseded: bool = False,
+    ) -> Reflection | None:
+        """Synthesize a pattern across experiences matching the query.
+
+        Gathers up to k relevant experiences with recall() and hands them to
+        the reflector. Returns None when there is nothing to reflect on or the
+        reflector abstains. A reflection is derived knowledge: reflecting on an
+        unchanged set of experiences again replaces the earlier reflection
+        rather than duplicating it, and it never feeds back into recall() or
+        recommend() on its own.
+        """
+        experiences = self.recall(query, k=k, include_superseded=include_superseded)
+        if not experiences:
+            return None
+        draft = reflector.reflect(experiences)
+        if draft is None:
+            return None
+        ids = sorted(exp.id for exp in experiences)
+        reflection = Reflection(
+            id=reflection_id(ids),
+            summary=draft.summary,
+            pattern=draft.pattern,
+            supporting_experience_ids=ids,
+        )
+        self.storage.add_reflection(reflection)
+        return reflection
+
+    def get_reflection(self, reflection_id: str) -> Reflection | None:
+        return self.storage.get_reflection(reflection_id)
+
+    def recent_reflections(self, n: int = 10) -> list[Reflection]:
+        return self.storage.recent_reflections(n)
 
     def count(self) -> int:
         return self.storage.count()

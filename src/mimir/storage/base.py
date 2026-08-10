@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import NamedTuple
 
 from ..models import Experience
+from ..reflect import Reflection
 
 
 class ActionStat(NamedTuple):
@@ -88,6 +89,18 @@ class Storage(ABC):
     @abstractmethod
     def count(self) -> int:
         """Total number of stored experiences."""
+
+    @abstractmethod
+    def add_reflection(self, reflection: Reflection) -> None:
+        """Persist a reflection, replacing any earlier one with the same id."""
+
+    @abstractmethod
+    def get_reflection(self, reflection_id: str) -> Reflection | None:
+        """Fetch one reflection by id, or None."""
+
+    @abstractmethod
+    def recent_reflections(self, n: int = 10) -> list[Reflection]:
+        """Return the n most recent reflections, newest first."""
 
     @abstractmethod
     def close(self) -> None:

@@ -343,14 +343,17 @@ def test_fresh_db_is_stamped_at_latest_version(memory):
 
 
 def test_outcome_index_dropped_on_upgrade(tmp_path):
-    # A database one version behind sheds the stale index when reopened.
-    from mimir.storage.migrations import SCHEMA_VERSION
+    # A database left just before the drop migration sheds the stale index
+    # when reopened. Pinned to that migration's own position, not the latest
+    # version, so appending a later migration can't silently defang this test.
+    from mimir.storage.migrations import MIGRATIONS, SCHEMA_VERSION, drop_outcome_index
 
     db = str(tmp_path / "mimir.db")
     seed = Mimir(db_path=db)
     conn = seed.storage.conn
     conn.execute("CREATE INDEX IF NOT EXISTS idx_experiences_outcome ON experiences(outcome)")
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+    version_before_drop = MIGRATIONS.index(drop_outcome_index)
+    conn.execute(f"PRAGMA user_version = {version_before_drop}")
     conn.commit()
     seed.close()
 
@@ -392,6 +395,8 @@ def test_legacy_db_at_version_zero_fully_upgrades(tmp_path):
             "SELECT action_norm FROM experiences WHERE id = '1'"
         ).fetchone()
         assert row["action_norm"] == "redis caching"
+        tables = {r["name"] for r in m.storage.conn.execute("SELECT name FROM sqlite_master")}
+        assert "reflections" in tables
     finally:
         m.close()
 
