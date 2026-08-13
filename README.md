@@ -131,7 +131,7 @@ Experience
 
 Strategy   (derived)  problem_pattern, recommended_action, confidence,
                       success_count, failure_count, source_experience_ids
-Reflection (derived)  summary, pattern, supporting_experience_ids, created_at
+Reflection (derived)  id, summary, pattern, supporting_experience_ids, created_at
 ```
 
 ## Installation
@@ -382,7 +382,7 @@ ranking.
 |---|---|---|
 | **1: Episodic memory** | `record()` / `recall()`, outcome tracking, SQLite backend | ✅ Done |
 | **2: Failure memory** | `record_failure()`, failures queried separately | ✅ Done |
-| **3: Reflection engine** | `reflect()`: cluster experiences, synthesize patterns (LLM) | Planned |
+| **3: Reflection engine** | `reflect()`: synthesize patterns across experiences (pluggable, LLM optional) | ✅ Stored as reflections; does not yet feed back into ranking |
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Beta-posterior confidence over relevance/recency-weighted evidence, pluggable action clustering (non-LLM) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | ✅ MCP server over a shared SQLite file; Postgres backend still future |
@@ -413,9 +413,10 @@ What works today, with no LLM anywhere in the read or write path:
 - **Staleness handling** through explicit superseding and optional time decay.
 - **An MCP server**, so Claude Code, Codex, and Cursor can share one memory without any code.
 - **Conversation distillation** behind a pluggable seam, for turning a finished transcript into an experience.
+- **Reflection**, `reflect()`, synthesizing a pattern across a set of experiences behind the same kind of pluggable seam. Stored as a `Reflection`, and rebuildable rather than authoritative; it does not yet feed back into `recall()` or `recommend()`.
 - **Reliability**: versioned schema with a migration runner, concurrent reads under WAL, and a recall@k / recommendation-accuracy gate in CI.
 
-Not built yet: the LLM reflection engine, materialized strategy rows, and the Postgres backend for multi-agent writes. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
+Not built yet: materialized strategy rows and the Postgres backend for multi-agent writes. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 

@@ -7,6 +7,7 @@ from .core import Mimir
 from .distill import CallableDistiller, Distiller, Draft
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, OutcomeScoreWarning, Recommendation
+from .reflect import CallableReflector, Reflection, Reflector
 from .storage import SQLiteStorage, Storage, VectorIndexWarning
 
 try:
@@ -31,4 +32,7 @@ __all__ = [
     "Distiller",
     "CallableDistiller",
     "Draft",
+    "Reflector",
+    "CallableReflector",
+    "Reflection",
 ]

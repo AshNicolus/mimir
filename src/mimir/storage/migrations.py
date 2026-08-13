@@ -47,7 +47,22 @@ def drop_outcome_index(conn: sqlite3.Connection) -> None:
     conn.execute("DROP INDEX IF EXISTS idx_experiences_outcome")
 
 
-MIGRATIONS = [create_base_schema, add_action_norm, drop_outcome_index]
+def create_reflections_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reflections (
+            id                         TEXT PRIMARY KEY,
+            summary                    TEXT NOT NULL,
+            pattern                    TEXT NOT NULL,
+            supporting_experience_ids  TEXT NOT NULL,
+            created_at                 TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reflections_created ON reflections(created_at)")
+
+
+MIGRATIONS = [create_base_schema, add_action_norm, drop_outcome_index, create_reflections_table]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
