@@ -423,6 +423,13 @@ memory.supersede(old.id, new.id)
 Pass `include_superseded=True` to `recall` or `recommend` to see superseded rows
 anyway, which helps when you want to study how a strategy changed over time.
 
+`count()` and `recent()` are the exception: they always include superseded
+rows, because they answer "what is in the store", not "what is still
+actionable". Reach for `recall` or `recommend` when you want the live view.
+
+An experience cannot supersede itself; `supersede(id, id)` raises rather than
+silently hiding a row with nothing recorded as its replacement.
+
 ### Time decay
 
 For gradual staleness rather than a hard cutoff, set a half-life. Evidence then

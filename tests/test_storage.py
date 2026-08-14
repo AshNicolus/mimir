@@ -98,6 +98,24 @@ def test_supersede_unknown_id_returns_false(memory):
     assert memory.supersede("does-not-exist", "also-missing") is False
 
 
+def test_supersede_rejects_an_experience_superseding_itself(memory):
+    exp = memory.record("fix login", "add cache")
+    with pytest.raises(ValueError, match="cannot supersede itself"):
+        memory.supersede(exp.id, exp.id)
+    # rejected before touching storage: the row is untouched
+    assert memory.get(exp.id).superseded_by is None
+    assert [e.id for e in memory.recall("login", k=5)] == [exp.id]
+
+
+def test_count_and_recent_include_superseded_rows(memory):
+    old = memory.record("fix login", "old approach", outcome="failure")
+    new = memory.record("fix login", "new approach", supersedes=old.id)
+
+    assert memory.count() == 2
+    assert {e.id for e in memory.recent(10)} == {old.id, new.id}
+    assert [e.id for e in memory.recall("login", k=5)] == [new.id]
+
+
 def test_record_with_supersedes_links_in_one_call(memory):
     old = memory.record("fix login", "add a write cache")
     new = memory.record("fix login", "add a read cache", supersedes=old.id)

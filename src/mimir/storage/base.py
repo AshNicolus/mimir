@@ -84,11 +84,12 @@ class Storage(ABC):
 
     @abstractmethod
     def recent(self, n: int = 10) -> list[Experience]:
-        """Return the n most recent experiences, newest first."""
+        """Return the n most recent experiences, newest first, including
+        superseded rows: search/aggregate_actions exclude them, this does not."""
 
     @abstractmethod
     def count(self) -> int:
-        """Total number of stored experiences."""
+        """Total number of stored experiences, including superseded rows."""
 
     @abstractmethod
     def add_reflection(self, reflection: Reflection) -> None:
