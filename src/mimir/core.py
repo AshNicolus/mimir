@@ -137,6 +137,8 @@ class Mimir:
     def supersede(self, old_id: str, new_id: str) -> bool:
         """Mark old_id as replaced by new_id, hiding it from recall and
         recommendation. Returns True if old_id existed."""
+        if old_id == new_id:
+            raise ValueError("an experience cannot supersede itself")
         return self.storage.set_superseded_by(old_id, new_id)
 
     def write(self, exp: Experience) -> Experience:
@@ -219,6 +221,11 @@ class Mimir:
         return self.storage.delete(experience_id)
 
     def recent(self, n: int = 10) -> list[Experience]:
+        """Return the n most recently recorded experiences, newest first.
+
+        Unlike recall() and recommend(), this includes superseded rows: it
+        answers "what did I just record", not "what is still actionable".
+        """
         return self.storage.recent(n)
 
     def recommend(
@@ -322,6 +329,7 @@ class Mimir:
         return self.storage.recent_reflections(n)
 
     def count(self) -> int:
+        """Total experiences stored, including superseded rows."""
         return self.storage.count()
 
     def close(self) -> None:
