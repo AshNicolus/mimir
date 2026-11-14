@@ -44,7 +44,7 @@ Mimir fixes this by giving the agent a track record. Every task it attempts beco
 - `recommend()` returns the single best-supported action with an honest confidence, a conservative success rate you can threshold on. Reuse the strategy when confidence is high, explore when it is low, and never repeat an action that has only ever failed.
 - Stale knowledge fades. Supersede an experience explicitly, or set a half-life and let old evidence lose weight on its own as the world drifts.
 
-The result is an agent that gets measurably cheaper and more reliable on the task families it sees often, with a memory you can inspect: every recommendation cites the experiences behind it.
+The result is an agent that wastes fewer attempts on the task families it sees often, with a memory you can inspect: every recommendation cites the experiences behind it. In the bundled eval's scripted environment (`python -m benchmarks.eval`), recurring tasks take 1.5 attempts to succeed with `recommend()` against 2.25 without memory. That is a proxy, not a token or dollar figure: real savings depend on how often your tasks recur and what an attempt costs.
 
 And it costs almost nothing to adopt: one `pip install`, a local SQLite file, no server, no LLM in the loop, and two calls (`record` after acting, `recall`/`recommend` before) wired into the agent loop you already have. If you already use Claude Code or Cursor, memory doesn't have to start empty: the bundled `mimir-ingest` command backfills it from the session history those tools have been keeping all along.
 
@@ -193,7 +193,7 @@ pip install --pre --index-url https://test.pypi.org/simple/ \
 
 The extra index is there because TestPyPI doesn't host Mimir's dependencies. Bump `version` in `pyproject.toml` on `main` when work on a new release starts, so staging builds are numbered as pre-releases of that version.
 
-**Requirements:** Python 3.10 or newer, tested in CI on 3.10 through 3.14 (Linux, macOS, Windows). Supporting the older end matters for agents, which run on whatever Python their host ships, and 3.10 is still the default on several current Linux distributions. There are no required external services: storage is a local SQLite file, and semantic search is an optional extra.
+**Requirements:** Python 3.10 or newer, tested in CI on 3.10 through 3.14 on Linux, and on 3.10 and 3.14 on macOS and Windows. Supporting the older end matters for agents, which run on whatever Python their host ships, and 3.10 is still the default on several current Linux distributions. There are no required external services: storage is a local SQLite file, and semantic search is an optional extra.
 
 ## Quick start
 
@@ -475,7 +475,7 @@ ranking.
 | **Session backfill** | `mimir-ingest`: turn existing coding-agent session logs into experiences | ✅ Claude Code and Cursor; Codex planned |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
-| **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |
+| **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy / decay / attempts-proxy gate in CI | ✅ Done |
 | **Concurrency** | Per-thread connections so reads scale under WAL, writes serialized | ✅ Done |
 | **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows | ✅ Python 3.10 and newer |
 

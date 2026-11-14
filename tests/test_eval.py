@@ -13,3 +13,9 @@ def test_quality_metrics_hold():
     assert metrics["mrr"] >= 0.90, metrics
     assert metrics["recommend_accuracy"] == 1.0, metrics
     assert metrics["decay_recency_correct"] == 1.0, metrics
+
+
+def test_memory_cuts_attempts_on_recurring_tasks():
+    # A proxy, not a token count: see benchmarks.eval.attempts_proxy.
+    metrics = run_eval()
+    assert metrics["proxy_attempts_with_memory"] < metrics["proxy_attempts_no_memory"], metrics
