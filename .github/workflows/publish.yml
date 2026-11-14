@@ -11,15 +11,27 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
+# Only PR runs share a group, so a newer push cancels a stale PR run. Staging
+# pushes and releases each get their own group and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build & test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install --upgrade pip build
@@ -36,6 +48,24 @@ jobs:
           pyproject.toml
       - name: Build distributions
         run: python -m build
+      - name: Smoke-test the wheel
+        # Installs the exact wheel that gets published into a fresh venv,
+        # outside the checkout, so nothing resolves to src/ or an editable install.
+        run: |
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/*.whl)"
+          python -m venv /tmp/wheel-env
+          cd /tmp
+          /tmp/wheel-env/bin/pip install "$wheel"
+          /tmp/wheel-env/bin/python -c "
+          from mimir import Mimir
+          m = Mimir(':memory:')
+          m.record('fix a flaky test', 'add a retry', outcome='success')
+          assert m.recommend('fix a flaky test').recommended_action == 'add a retry'
+          "
+          /tmp/wheel-env/bin/mimir-ingest --help
+          # mimir-mcp needs the mcp extra; with stdin closed it starts and exits 0.
+          /tmp/wheel-env/bin/pip install "$wheel[mcp]"
+          MIMIR_DB_PATH=/tmp/smoke.db timeout 60 /tmp/wheel-env/bin/mimir-mcp < /dev/null
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -44,6 +74,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
+    timeout-minutes: 10
     needs: build
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
@@ -61,6 +92,7 @@ jobs:
 
   publish-testpypi:
     name: Publish to TestPyPI
+    timeout-minutes: 10
     needs: build
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

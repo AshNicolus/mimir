@@ -5,9 +5,19 @@ on:
     branches: [main, staging]
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a PR cancels its stale run. Branch pushes get a unique group,
+# so they never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,8 +30,11 @@ jobs:
       - name: Ruff
         run: ruff check .
 
+  # The job and matrix names here are required checks on main and staging:
+  # don't rename them. Other OSes run in test-os below.
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +45,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -40,3 +55,30 @@ jobs:
         run: pytest -q
       - name: Quality eval (metrics)
         run: python -m benchmarks.eval
+
+  # macOS and Windows on the oldest and newest supported Python.
+  test-os:
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash  # pwsh would not stop on the first failing line
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,vector]"
+      - name: Test (pytest)
+        run: pytest -q
