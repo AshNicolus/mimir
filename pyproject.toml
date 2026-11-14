@@ -29,7 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 # ruff is pinned so a new release cannot change the lint result under CI.
 # Keep this in step with the version the lint job installs in ci.yml.
-dev = ["pytest>=8.0", "ruff==0.16.1", "mcp>=2.0"]
+dev = ["pytest>=8.0", "ruff==0.16.1", "mcp>=2.0", "psycopg[binary]>=3.1"]
 # Local semantic search (optional). Keyword recall works without this.
 embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
 # ANN vector index for fast semantic recall. Without it, recall falls back to
@@ -37,8 +37,10 @@ embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
 vector = ["sqlite-vec>=0.1.6"]
 # MCP server, so Claude Code, Codex, and other MCP clients share one memory.
 mcp = ["mcp>=2.0"]
-# Everything optional in one go: semantic recall, the ANN index, and the MCP server.
-all = ["mimir-learn[embeddings,vector,mcp]"]
+# Postgres backend, for many agents writing to one shared store concurrently.
+postgres = ["psycopg[binary]>=3.1"]
+# Everything optional in one go: semantic recall, the ANN index, the MCP server, Postgres.
+all = ["mimir-learn[embeddings,vector,mcp,postgres]"]
 
 [project.scripts]
 mimir-mcp = "mimir.mcp_server:main"
@@ -55,6 +57,7 @@ packages = ["src/mimir"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]  # let tests import the benchmarks package
+markers = ["sqlite_only: inspects SQLite internals; skipped when MIMIR_TEST_POSTGRES_DSN is set"]
 
 [tool.ruff]
 line-length = 100

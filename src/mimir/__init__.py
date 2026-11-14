@@ -8,7 +8,7 @@ from .distill import CallableDistiller, Distiller, Draft
 from .embeddings import Embedder, NullEmbedder
 from .models import Experience, Outcome, OutcomeScoreWarning, Recommendation
 from .reflect import CallableReflector, Reflection, Reflector
-from .storage import SQLiteStorage, Storage, VectorIndexWarning
+from .storage import PostgresStorage, SQLiteStorage, Storage, VectorIndexWarning
 
 try:
     __version__ = version("mimir-learn")
@@ -24,6 +24,7 @@ __all__ = [
     "Recommendation",
     "Storage",
     "SQLiteStorage",
+    "PostgresStorage",
     "Embedder",
     "NullEmbedder",
     "ActionClusterer",

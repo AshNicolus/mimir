@@ -163,6 +163,7 @@ Optional extras (keyword recall and recommendations work without any of them):
 pip install "mimir-learn[embeddings]"  # local embeddings for semantic recall
 pip install "mimir-learn[vector]"      # sqlite-vec ANN index for fast vector search
 pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
+pip install "mimir-learn[postgres]"    # Postgres backend for many agents writing at once
 pip install "mimir-learn[all]"         # all of the above
 ```
 
@@ -462,6 +463,44 @@ The same half-life also reweights `recall()`: a fresh experience outranks an
 equally relevant but staler one. Reported counts stay exact; decay only affects
 ranking.
 
+## Postgres for many agents at once
+
+SQLite serializes writes, which is plenty for one machine. When a team or a fleet
+of agents on several machines should share one memory, point Mimir at Postgres:
+
+```bash
+pip install "mimir-learn[postgres]"
+```
+
+```python
+memory = Mimir("postgresql://mimir:secret@db.internal:5432/agents")
+```
+
+Any `postgresql://` URL works wherever a database path does, so the MCP server and
+`mimir-ingest` switch over with no code at all:
+
+```bash
+export MIMIR_DB_PATH="postgresql://mimir:secret@db.internal:5432/agents"
+mimir-mcp                  # every connected client now shares the Postgres store
+mimir-ingest run           # backfills into it too
+```
+
+- **Same answers as SQLite.** Keyword relevance is BM25 with SQLite FTS5's
+  parameters, computed in SQL. The quality eval scores identically on both
+  backends, and the whole test suite runs against Postgres in CI.
+- **Concurrent writers.** Writes from many processes and machines land without
+  serializing on one file. Re-recording the same experience from two writers
+  at once leaves one row.
+- **Separate stores in one database.** `PostgresStorage(url, schema="team_a")`
+  keeps each store in its own schema, created on first use. Schema upgrades take
+  an advisory lock, so many agents can start at once.
+- **Passwords stay out of sight.** `memory_stats` and other places that show where
+  the store lives mask the password.
+
+Vector recall on Postgres is a full scan with cosine in Python, the same fallback
+SQLite uses without sqlite-vec. It's fine for thousands of embedded rows. A
+pgvector index for larger stores is planned.
+
 ## Roadmap
 
 | Phase | Goal | Status |
@@ -471,7 +510,7 @@ ranking.
 | **3: Reflection engine** | `reflect()`: synthesize patterns across experiences (pluggable, LLM optional) | ✅ Stored as reflections; does not yet feed back into ranking |
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Beta-posterior confidence over relevance/recency-weighted evidence, pluggable action clustering (non-LLM) |
-| **6: Shared org memory** | Multiple agents learn from a shared store | ✅ MCP server over a shared SQLite file; Postgres backend still future |
+| **6: Shared org memory** | Multiple agents learn from a shared store | ✅ MCP server over a shared SQLite file, or a Postgres backend for writers on many machines |
 | **Session backfill** | `mimir-ingest`: turn existing coding-agent session logs into experiences | ✅ Claude Code and Cursor; Codex planned |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
@@ -484,7 +523,7 @@ ranking.
 Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
 1. **v1**: SQLite, in-process; WAL with per-thread connections so reads scale across threads while writes serialize.
-2. **v2**: Postgres + pgvector backend for concurrent multi-agent writes.
+2. **v2**: Postgres backend for concurrent multi-agent writes. ✅ Done; a pgvector index is next.
 3. **v3**: extract the (slow, batch) reflection engine into an async worker.
 4. **v4**: Redis cache for hot/recent experiences on the read path.
 
@@ -499,12 +538,13 @@ What works today, with no LLM anywhere in the read or write path:
 - **Hybrid recall**, keyword and vector fused, with an optional sqlite-vec index and a query-embedding cache.
 - **Staleness handling** through explicit superseding and optional time decay.
 - **An MCP server**, so Claude Code, Codex, and Cursor can share one memory without any code.
+- **A Postgres backend**, for many agents on many machines writing to one store at once, ranking identically to SQLite.
 - **Conversation distillation** behind a pluggable seam, for turning a finished transcript into an experience.
 - **Session backfill**, `mimir-ingest`, so memory starts from your existing Claude Code and Cursor history instead of empty.
 - **Reflection**, `reflect()`, synthesizing a pattern across a set of experiences behind the same kind of pluggable seam. Stored as a `Reflection`, and rebuildable rather than authoritative; it does not yet feed back into `recall()` or `recommend()`.
 - **Reliability**: versioned schema with a migration runner, concurrent reads under WAL, and a recall@k / recommendation-accuracy gate in CI.
 
-Not built yet: materialized strategy rows and the Postgres backend for multi-agent writes. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
+Not built yet: materialized strategy rows and a pgvector index for the Postgres backend. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
