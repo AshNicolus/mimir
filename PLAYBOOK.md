@@ -1050,6 +1050,15 @@ faster vector index.
 **Is it safe from multiple threads?** Yes. A file-backed store uses WAL mode:
 reads scale across threads and writes are serialized.
 
+**Recall gets slower when I add threads, on macOS.** Some SQLite builds slow
+down when several threads of one process run ranked full-text search at once.
+Homebrew's SQLite 3.53.4 does: about 700 recalls per second on 1 thread, but
+300 on 4. On the same Mac, Apple's SQLite 3.54.0 went from 580 to 1,500, and
+Linux scales too. Check which SQLite your Python uses with
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"`. To add read
+throughput there, use separate processes, which don't share the slowdown, or
+a Python built against a different SQLite.
+
 **Where is my data?** In the SQLite file at `db_path`. Delete the file to reset.
 
 ## Extending Mimir
