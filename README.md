@@ -525,14 +525,14 @@ pgvector index for larger stores is planned.
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
 | **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy / decay / attempts-proxy gate in CI | ✅ Done |
-| **Concurrency** | Per-thread connections so reads scale under WAL, writes serialized | ✅ Done |
+| **Concurrency** | Per-thread connections under WAL, writes serialized; ranked search takes turns within a process, and processes scale | ✅ Done |
 | **Runtime support** | Run on the Python versions agent hosts actually ship, across Linux, macOS, and Windows | ✅ Python 3.10 and newer |
 
 ## Scaling path
 
 Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
-1. **v1**: SQLite, in-process; WAL with per-thread connections so reads scale across threads while writes serialize.
+1. **v1**: SQLite, in-process; WAL with per-thread connections, serialized writes, and ranked search one query at a time per process. Separate processes read in parallel.
 2. **v2**: Postgres backend for concurrent multi-agent writes. ✅ Done; a pgvector index is next.
 3. **v3**: extract the (slow, batch) reflection engine into an async worker.
 4. **v4**: Redis cache for hot/recent experiences on the read path.

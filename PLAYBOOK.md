@@ -542,8 +542,11 @@ interface.
   restarts. `Mimir(":memory:")` is ephemeral, which is ideal for tests. Missing
   parent directories are created for you.
 - Concurrency. A file-backed store runs in SQLite WAL mode. Each reader thread
-  gets its own connection so reads scale across threads, while writes are
-  serialized. Reading and writing from several threads is safe.
+  gets its own connection, and writes are serialized. Reading and writing from
+  several threads is safe. Relevance-ranked search (`recall`, `recommend`)
+  runs one query at a time per process, because SQLite's ranking slows down
+  when threads run it at once. For more read throughput, use several
+  processes, which don't contend.
 - Many machines. Pass a `postgresql://` URL instead of a file path, after
   `pip install "mimir-learn[postgres]"`. Writers on many processes and machines
   can then share one store without serializing on a file, and ranking matches
@@ -1047,8 +1050,9 @@ words. Add an embedder for semantic recall.
 Pydantic installed. Add `embeddings` for meaning-based recall and `vector` for a
 faster vector index.
 
-**Is it safe from multiple threads?** Yes. A file-backed store uses WAL mode:
-reads scale across threads and writes are serialized.
+**Is it safe from multiple threads?** Yes. A file-backed store uses WAL mode,
+and writes are serialized. Ranked searches take turns within a process, so
+extra threads don't add search throughput; extra processes do.
 
 **Where is my data?** In the SQLite file at `db_path`. Delete the file to reset.
 

@@ -43,8 +43,9 @@ def build_store():
 
 
 def read_ops_per_sec(store, n_threads):
-    # Fixed work per thread, measured by wall clock: if reads run concurrently,
-    # n_threads finish in about the time of one, so throughput scales with cores.
+    # Fixed work per thread, measured by wall clock. Ranked reads take turns
+    # within a process (FTS_RANK_LOCK in storage/sqlite.py), so 4 threads should
+    # match 1 thread. A drop below it means SQLite's bm25() contention is back.
     ready = threading.Barrier(n_threads + 1)
 
     def worker():

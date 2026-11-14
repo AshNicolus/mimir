@@ -33,6 +33,16 @@ from .query import bm25_to_score, context_matches, context_sql_filters, query_te
 VEC_DIM_PATTERN = re.compile(r"float\[(\d+)\]")
 KNN_OVERFETCH = 8  # KNN can't filter inline, so fetch extra and filter after
 
+# FTS5's bm25() ranking collapses when threads in one process run it at once,
+# even on separate connections: 1 thread ran ~660 ranked queries/sec, 4 threads
+# ~290 and 8 threads ~170, while plain MATCH and other queries scaled. Taking
+# turns holds ~670/sec at any thread count. It is process-wide because the
+# contention is inside SQLite, shared by every connection. Separate processes
+# don't contend and still scale.
+# shortcut: measured on SQLite 3.53. If a later SQLite stops contending, drop
+# this lock and re-check with `python -m benchmarks.run` (read_4thread_ops_per_sec).
+FTS_RANK_LOCK = threading.Lock()
+
 
 class VectorIndexWarning(UserWarning):
     """An embedding could not be added to the vector index."""
@@ -407,7 +417,7 @@ class SQLiteStorage(Storage):
             sql += " LIMIT ?"
             params.append(limit)
 
-        with self.reading() as conn:
+        with self.reading() as conn, FTS_RANK_LOCK:
             rows = conn.execute(sql, params).fetchall()
         return [(self.row_to_experience(r), bm25_to_score(r["rank"])) for r in rows]
 
@@ -571,7 +581,7 @@ class SQLiteStorage(Storage):
             if decay:
                 weight += " * pow(2.0, -(julianday('now') - julianday(created_at)) / ?)"
                 params = [half_life_days, match]
-            with self.reading() as conn:
+            with self.reading() as conn, FTS_RANK_LOCK:
                 rows = conn.execute(
                     "SELECT key, MIN(action) AS action, "
                     "SUM(outcome = 'success') AS success, "
@@ -609,7 +619,7 @@ class SQLiteStorage(Storage):
         # Decay without SQL math functions: score per row, then group in Python.
         if self.fts_enabled:
             match = " OR ".join(f'"{t}"' for t in terms)
-            with self.reading() as conn:
+            with self.reading() as conn, FTS_RANK_LOCK:
                 rows = conn.execute(
                     "SELECT key, action, outcome, created_at, s / (1.0 + s) AS relevance FROM ("
                     "  SELECT e.action_norm AS key, e.action AS action, e.outcome AS outcome, "
