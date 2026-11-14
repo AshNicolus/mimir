@@ -36,9 +36,9 @@ class TopicEmbedder(Embedder):
 def vec_memory(**kwargs):
     """A Mimir whose store actually loaded the ANN index, or skip."""
     m = Mimir(":memory:", embedder=TopicEmbedder(), **kwargs)
-    if not m.storage.vec_enabled:
+    if not getattr(m.storage, "vec_enabled", False):
         m.close()
-        pytest.skip("sqlite-vec not available; covered by the cosine fallback")
+        pytest.skip("no sqlite-vec ANN index here; covered by the cosine fallback")
     return m
 
 

@@ -1,5 +1,7 @@
 """reflect(): synthesizing a pattern across a set of experiences."""
 
+import pytest
+
 from mimir import CallableReflector
 from mimir.reflect import ReflectionDraft
 
@@ -118,6 +120,7 @@ def test_blank_summary_or_pattern_is_rejected():
         ReflectionDraft(summary="something", pattern="")
 
 
+@pytest.mark.sqlite_only
 def test_fresh_db_has_the_reflections_table(memory):
     tables = {r["name"] for r in memory.storage.conn.execute("SELECT name FROM sqlite_master")}
     assert "reflections" in tables

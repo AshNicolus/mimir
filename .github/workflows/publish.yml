@@ -1,38 +1,80 @@
 name: Build & Publish
 
 # On every pull request this builds the package and runs the tests as a merge
-# gate. When a GitHub Release is published it also pushes to PyPI using Trusted
-# Publishing (OIDC), so no API tokens are stored anywhere.
+# gate. Every push to staging publishes a pre-release to TestPyPI, and a
+# published GitHub Release pushes to PyPI. Both use Trusted Publishing (OIDC),
+# so no API tokens are stored anywhere.
 on:
   pull_request:
+  push:
+    branches: [staging]
   release:
     types: [published]
+
+permissions:
+  contents: read
+
+# Only PR runs share a group, so a newer push cancels a stale PR run. Staging
+# pushes and releases each get their own group and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:
     name: Build & test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install --upgrade pip build
           pip install -e ".[dev]"
       - name: Test
         run: pytest -q
+      - name: Mark as a staging pre-release
+        # TestPyPI never accepts the same version twice, so each staging push
+        # publishes <pyproject version>.dev<run number>.
+        if: github.event_name == 'push'
+        run: >-
+          sed -i -E
+          's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/'
+          pyproject.toml
       - name: Build distributions
         run: python -m build
+      - name: Smoke-test the wheel
+        # Installs the exact wheel that gets published into a fresh venv,
+        # outside the checkout, so nothing resolves to src/ or an editable install.
+        run: |
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/*.whl)"
+          python -m venv /tmp/wheel-env
+          cd /tmp
+          /tmp/wheel-env/bin/pip install "$wheel"
+          /tmp/wheel-env/bin/python -c "
+          from mimir import Mimir
+          m = Mimir(':memory:')
+          m.record('fix a flaky test', 'add a retry', outcome='success')
+          assert m.recommend('fix a flaky test').recommended_action == 'add a retry'
+          "
+          /tmp/wheel-env/bin/mimir-ingest --help
+          # mimir-mcp needs the mcp extra; with stdin closed it starts and exits 0.
+          /tmp/wheel-env/bin/pip install "$wheel[mcp]"
+          MIMIR_DB_PATH=/tmp/smoke.db timeout 60 /tmp/wheel-env/bin/mimir-mcp < /dev/null
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
 
   publish:
     name: Publish to PyPI
+    timeout-minutes: 10
     needs: build
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
@@ -41,9 +83,29 @@ jobs:
       id-token: write  # required for Trusted Publishing (OIDC)
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    timeout-minutes: 10
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

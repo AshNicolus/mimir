@@ -16,6 +16,16 @@ METRICS = [
     ("read_4thread_ops_per_sec", "concurrent read, 4 threads (ops/sec)", True),
 ]
 
+# Shared CI runners swing by several percent run to run; smaller changes are
+# reported as noise rather than as a win or a regression.
+NOISE_PCT = 10.0
+
+
+def status(delta, higher):
+    if abs(delta) < NOISE_PCT:
+        return "~ same"
+    return "better" if (delta if higher else -delta) > 0 else "**worse**"
+
 
 def get(data, key):
     # Tolerate older runs that predate a metric so the table still renders.
@@ -39,14 +49,17 @@ def main():
     ]
     for key, label, higher in METRICS:
         b, h = get(base, key), get(head, key)
-        delta = (h - b) / b * 100 if b else 0.0
-        status = "better" if (delta if higher else -delta) >= 0 else "worse"
-        rows.append(f"| {label} | {b} | {h} | {status} {delta:+.1f}% |")
+        if b:
+            delta = (h - b) / b * 100
+            change = f"{status(delta, higher)} {delta:+.1f}%"
+        else:
+            change = "n/a"  # metric missing from the base run
+        rows.append(f"| {label} | {b:,} | {h:,} | {change} |")
 
     rows += [
         "",
-        "_Same-runner comparison, informational only. "
-        "CI does not fail on regressions (CI timing is noisy)._",
+        f"_Same-runner comparison, informational only. Changes under {NOISE_PCT:.0f}% "
+        "read as noise. CI does not fail on regressions (CI timing is noisy)._",
     ]
     print("\n".join(rows))
 

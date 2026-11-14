@@ -288,6 +288,7 @@ def test_file_db_opens_a_connection_per_reader_thread(tmp_path):
     assert storage.connections == []
 
 
+@pytest.mark.sqlite_only
 def test_memory_db_stays_single_connection(memory):
     # In-memory databases can't share data across connections.
     assert memory.storage.shared
@@ -346,6 +347,7 @@ def index_names(memory):
     return {row["name"] for row in rows}
 
 
+@pytest.mark.sqlite_only
 def test_outcome_index_is_not_created(memory):
     assert "idx_experiences_outcome" not in index_names(memory)
 
@@ -354,6 +356,7 @@ def user_version(memory):
     return memory.storage.conn.execute("PRAGMA user_version").fetchone()[0]
 
 
+@pytest.mark.sqlite_only
 def test_fresh_db_is_stamped_at_latest_version(memory):
     from mimir.storage.migrations import SCHEMA_VERSION
 

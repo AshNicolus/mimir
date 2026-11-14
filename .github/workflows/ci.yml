@@ -2,15 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels its stale run. Branch pushes get a unique group,
+# so they never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install ruff
@@ -20,18 +30,23 @@ jobs:
       - name: Ruff
         run: ruff check .
 
+  # The job and matrix names here are required checks on main and staging:
+  # don't rename them. Other OSes run in test-os below.
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -40,3 +55,66 @@ jobs:
         run: pytest -q
       - name: Quality eval (metrics)
         run: python -m benchmarks.eval
+
+  # macOS and Windows on the oldest and newest supported Python.
+  test-os:
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash  # pwsh would not stop on the first failing line
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,vector]"
+      - name: Test (pytest)
+        run: pytest -q
+
+  # The whole suite against a real Postgres: every in-memory store in the tests
+  # becomes a fresh schema there (tests/conftest.py).
+  test-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIMIR_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,postgres]"
+      - name: Postgres-only tests (must run, not skip)
+        # A skip here means the DSN or driver is missing, which would leave
+        # this job green with no Postgres coverage at all.
+        run: |
+          pytest -q -rs tests/test_postgres.py | tee pg.log
+          ! grep -q "skipped" pg.log
+      - name: Whole suite on Postgres
+        run: pytest -q

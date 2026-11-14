@@ -15,7 +15,14 @@ from datetime import timedelta
 from mimir import Experience, Mimir
 from mimir.models import utcnow
 
-from .eval_dataset import DECAY_CASE, DECAY_SEEDS, RECALL_CASES, RECOMMEND_CASES, SEEDS
+from .eval_dataset import (
+    DECAY_CASE,
+    DECAY_SEEDS,
+    FAMILIES,
+    RECALL_CASES,
+    RECOMMEND_CASES,
+    SEEDS,
+)
 
 
 def seed_store() -> tuple[Mimir, dict[str, str]]:
@@ -66,6 +73,42 @@ def decay_recency_correct(half_life_days: float = 30) -> float:
         memory.close()
 
 
+def attempts_proxy() -> dict[str, float]:
+    """Mean attempts to first success, without memory and with recommend().
+
+    A proxy for the "cheaper" claim, not a measurement of tokens or money: each
+    attempt stands in for one try an agent pays for, in a scripted environment
+    where exactly one action per task family works. The memoryless agent tries
+    actions in a fixed order; the Mimir agent tries the recommendation first,
+    records every outcome, and falls back to the same order. Real savings depend
+    on how often tasks recur and what an attempt costs.
+    """
+    memory = Mimir(":memory:")
+    baseline = with_memory = 0
+    episodes = 0
+    try:
+        for round_ in range(len(FAMILIES[0].tasks)):
+            for family in FAMILIES:
+                task = family.tasks[round_]
+                baseline += family.actions.index(family.working) + 1
+                rec = memory.recommend(task)
+                order = [rec.recommended_action] if rec else []
+                order += [a for a in family.actions if a not in order]
+                for action in order:
+                    with_memory += 1
+                    worked = action == family.working
+                    memory.record(task, action, outcome="success" if worked else "failure")
+                    if worked:
+                        break
+                episodes += 1
+    finally:
+        memory.close()
+    return {
+        "proxy_attempts_no_memory": baseline / episodes,
+        "proxy_attempts_with_memory": with_memory / episodes,
+    }
+
+
 def run_eval(k: int = 5) -> dict[str, float]:
     memory, labels = seed_store()
     try:
@@ -74,6 +117,7 @@ def run_eval(k: int = 5) -> dict[str, float]:
     finally:
         memory.close()
     metrics["decay_recency_correct"] = decay_recency_correct()
+    metrics.update(attempts_proxy())
     return {key: round(value, 4) for key, value in metrics.items()}
 
 

@@ -10,16 +10,23 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -33,9 +40,11 @@ jobs:
           python /tmp/bench/compare.py /tmp/base.json /tmp/head.json > /tmp/bench.md
           cat /tmp/bench.md >> "$GITHUB_STEP_SUMMARY"
       - name: Comment on PR
-        # Forked PRs get a read-only token and can't comment, so skip them.
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: marocchino/sticky-pull-request-comment@v2
+        # Forked and Dependabot PRs get a read-only token and can't comment.
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]'
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: benchmark
           path: /tmp/bench.md
