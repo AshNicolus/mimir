@@ -3,10 +3,13 @@
 [![PyPI](https://img.shields.io/pypi/v/mimir-learn.svg)](https://pypi.org/project/mimir-learn/)
 [![Python](https://img.shields.io/pypi/pyversions/mimir-learn.svg)](https://pypi.org/project/mimir-learn/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/AshNicolus/mimir/blob/main/LICENSE)
+[![Docs](https://img.shields.io/badge/docs-ashnicolus.github.io%2Fmimir-blue.svg)](https://ashnicolus.github.io/mimir/)
 
 **Experience-driven memory for autonomous agents.** Mimir helps agents learn from their past successes and failures instead of starting from scratch on every task.
 
 > Named after Mímir, the keeper of wisdom in Norse mythology.
+
+**Documentation:** [ashnicolus.github.io/mimir](https://ashnicolus.github.io/mimir/)
 
 ---
 

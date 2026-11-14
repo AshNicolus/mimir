@@ -50,7 +50,8 @@ mimir-mcp = "mimir.mcp_server:main"
 mimir-ingest = "mimir.ingest.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/AshNicolus/mimir"
+Homepage = "https://ashnicolus.github.io/mimir/"
+Documentation = "https://ashnicolus.github.io/mimir/"
 Repository = "https://github.com/AshNicolus/mimir"
 
 [tool.hatch.build.targets.wheel]
