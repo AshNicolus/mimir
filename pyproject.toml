@@ -10,7 +10,7 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "AshNicolus" }]
-keywords = ["agents", "memory", "llm", "experience", "learning"]
+keywords = ["agents", "memory", "llm", "experience", "learning", "claude-code", "cursor", "mcp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -37,9 +37,13 @@ embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
 vector = ["sqlite-vec>=0.1.6"]
 # MCP server, so Claude Code, Codex, and other MCP clients share one memory.
 mcp = ["mcp>=2.0"]
+# Everything optional in one go: semantic recall, the ANN index, and the MCP server.
+all = ["mimir-learn[embeddings,vector,mcp]"]
 
 [project.scripts]
 mimir-mcp = "mimir.mcp_server:main"
+# Backfill the store from Claude Code and Cursor session logs (stdlib only, no extra).
+mimir-ingest = "mimir.ingest.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/AshNicolus/mimir"
