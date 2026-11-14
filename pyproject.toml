@@ -39,6 +39,8 @@ vector = ["sqlite-vec>=0.1.6"]
 mcp = ["mcp>=2.0"]
 # Postgres backend, for many agents writing to one shared store concurrently.
 postgres = ["psycopg[binary]>=3.1"]
+# Build the docs site (zensical.toml). Zensical needs Python 3.11 or newer.
+docs = ["zensical==0.1.1; python_version >= '3.11'"]
 # Everything optional in one go: semantic recall, the ANN index, the MCP server, Postgres.
 all = ["mimir-learn[embeddings,vector,mcp,postgres]"]
 
