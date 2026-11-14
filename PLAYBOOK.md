@@ -861,14 +861,12 @@ of how the conversation went.
 
 ### Backfilling from coding agent session logs
 
-Claude Code and Cursor already keep a raw history of every session.
-[mimir-ingest](https://github.com/AshNicolus/mimir-ingest) is a separate CLI
-that reads that history and writes it into a Mimir store through
-`record_conversation`. That way an agent can recall work it never explicitly
-recorded:
+Claude Code and Cursor already keep a raw history of every session. The
+`mimir-ingest` command, installed with `mimir-learn` and needing no extra, reads
+that history and writes it into a Mimir store through `record_conversation`.
+That way an agent can recall work it never explicitly recorded:
 
 ```bash
-pip install git+https://github.com/AshNicolus/mimir-ingest   # not on PyPI yet
 mimir-ingest run --dry-run               # print what would be stored; writes nothing
 mimir-ingest run                         # heuristic classification, no model needed
 mimir-ingest run --model qwen2.5:1.5b    # or classify with a local Ollama model
