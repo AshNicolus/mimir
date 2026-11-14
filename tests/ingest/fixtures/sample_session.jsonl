@@ -1,0 +1,7 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-01-01T10:00:00.000Z","sessionId":"s1"}
+{"parentUuid":null,"isSidechain":false,"type":"user","timestamp":"2026-01-01T10:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"add a health check endpoint"}]}}
+{"parentUuid":"a1","isSidechain":false,"type":"assistant","timestamp":"2026-01-01T10:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I will add a /health route."},{"type":"tool_use","name":"Edit","input":{"file_path":"app.py","old_string":"x","new_string":"y"}}]}}
+{"parentUuid":"a2","isSidechain":false,"type":"user","timestamp":"2026-01-01T10:00:06.000Z","message":{"role":"user","content":[{"type":"tool_result","content":"edited successfully"}]}}
+{"parentUuid":"a2","isSidechain":true,"type":"assistant","timestamp":"2026-01-01T10:00:07.000Z","message":{"role":"assistant","content":[{"type":"text","text":"a sub-agent branch that should never appear in the main line"}]}}
+this line is not valid json at all
+{"parentUuid":"a3","isSidechain":false,"type":"user","timestamp":"2026-01-01T11:30:00.000Z","message":{"role":"user","content":[{"type":"text","text":"thanks, works now"}]}}

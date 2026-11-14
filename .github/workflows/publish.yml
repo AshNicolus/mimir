@@ -1,10 +1,13 @@
 name: Build & Publish
 
 # On every pull request this builds the package and runs the tests as a merge
-# gate. When a GitHub Release is published it also pushes to PyPI using Trusted
-# Publishing (OIDC), so no API tokens are stored anywhere.
+# gate. Every push to staging publishes a pre-release to TestPyPI, and a
+# published GitHub Release pushes to PyPI. Both use Trusted Publishing (OIDC),
+# so no API tokens are stored anywhere.
 on:
   pull_request:
+  push:
+    branches: [staging]
   release:
     types: [published]
 
@@ -23,6 +26,14 @@ jobs:
           pip install -e ".[dev]"
       - name: Test
         run: pytest -q
+      - name: Mark as a staging pre-release
+        # TestPyPI never accepts the same version twice, so each staging push
+        # publishes <pyproject version>.dev<run number>.
+        if: github.event_name == 'push'
+        run: >-
+          sed -i -E
+          's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/'
+          pyproject.toml
       - name: Build distributions
         run: python -m build
       - name: Upload artifacts
@@ -47,3 +58,22 @@ jobs:
           path: dist/
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

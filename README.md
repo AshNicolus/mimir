@@ -46,7 +46,7 @@ Mimir fixes this by giving the agent a track record. Every task it attempts beco
 
 The result is an agent that gets measurably cheaper and more reliable on the task families it sees often, with a memory you can inspect: every recommendation cites the experiences behind it.
 
-And it costs almost nothing to adopt: one `pip install`, a local SQLite file, no server, no LLM in the loop, and two calls (`record` after acting, `recall`/`recommend` before) wired into the agent loop you already have.
+And it costs almost nothing to adopt: one `pip install`, a local SQLite file, no server, no LLM in the loop, and two calls (`record` after acting, `recall`/`recommend` before) wired into the agent loop you already have. If you already use Claude Code or Cursor, memory doesn't have to start empty: the bundled `mimir-ingest` command backfills it from the session history those tools have been keeping all along.
 
 ## The idea
 
@@ -103,6 +103,9 @@ Mimir is built as a **modular monolith Python library**, not a microservice swar
 ## Architecture
 
 ```
+  your agent (library calls)   MCP clients (mimir-mcp)   session logs (mimir-ingest)
+               │                         │                          │
+               ▼                         ▼                          ▼
 ┌────────────────────────────────────────────────────────────┐
 │  Public API   Mimir()  .record() .recall() .recommend()     │
 ├────────────────────────────────────────────────────────────┤
@@ -146,12 +149,21 @@ The distribution is named `mimir-learn` on PyPI, but you import it as `mimir`:
 from mimir import Mimir
 ```
 
+That one install is the whole toolkit, all sharing one store:
+
+| You get | What it is | Needs |
+|---|---|---|
+| `mimir` | The Python library: `record`, `recall`, `recommend`, `reflect` | nothing extra |
+| `mimir-ingest` | CLI that backfills memory from Claude Code and Cursor session logs | nothing extra |
+| `mimir-mcp` | MCP server, so Claude Code, Codex, and Cursor share one memory | the `mcp` extra |
+
 Optional extras (keyword recall and recommendations work without any of them):
 
 ```bash
 pip install "mimir-learn[embeddings]"  # local embeddings for semantic recall
 pip install "mimir-learn[vector]"      # sqlite-vec ANN index for fast vector search
 pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
+pip install "mimir-learn[all]"         # all of the above
 ```
 
 For development:
@@ -161,6 +173,25 @@ git clone https://github.com/AshNicolus/mimir.git
 cd mimir
 pip install -e ".[dev]"
 ```
+
+There are two long-lived branches. `main` is where development happens: open pull requests against it. `staging` holds release candidates:
+
+```
+feature branch ──PR──► main ──PR──► staging ──GitHub Release──► PyPI
+                                      │
+                                      └─ every push publishes <version>.devN to TestPyPI
+```
+
+Cut each GitHub Release from `staging`, once the release candidate there has been tried.
+
+To try the current release candidate before it reaches PyPI:
+
+```bash
+pip install --pre --index-url https://test.pypi.org/simple/ \
+    --extra-index-url https://pypi.org/simple/ mimir-learn
+```
+
+The extra index is there because TestPyPI doesn't host Mimir's dependencies. Bump `version` in `pyproject.toml` on `main` when work on a new release starts, so staging builds are numbered as pre-releases of that version.
 
 **Requirements:** Python 3.10 or newer, tested in CI on 3.10 through 3.14 (Linux, macOS, Windows). Supporting the older end matters for agents, which run on whatever Python their host ships, and 3.10 is still the default on several current Linux distributions. There are no required external services: storage is a local SQLite file, and semantic search is an optional extra.
 
@@ -204,7 +235,8 @@ changes on your side. Three steps.
 pip install "mimir-learn[mcp]"
 ```
 
-This adds a `mimir-mcp` command that serves Mimir over stdio. Your MCP client has
+This adds a `mimir-mcp` command that serves Mimir over stdio (alongside
+`mimir-ingest`, which every install includes). Your MCP client has
 to be able to find that command, so if you installed into a project virtualenv,
 either use its absolute path in the config below or install it globally instead:
 
@@ -299,6 +331,60 @@ server in your own process; the
 [Playbook](PLAYBOOK.md#sharing-memory-with-claude-code-codex-and-other-mcp-clients)
 shows how.
 
+## Backfill memory from past sessions
+
+An MCP-connected agent only learns from sessions after you connect it. Claude Code
+and Cursor have kept a raw history of every session before that, in their own
+undocumented formats. `mimir-ingest` reads that history and stores each piece of
+work as an experience, so `recall` and `recommend` start with evidence on day
+one instead of an empty store.
+
+```bash
+mimir-ingest run --dry-run               # print what would be stored; writes nothing
+mimir-ingest run                         # ingest Claude Code history, no model needed
+mimir-ingest run --source cursor         # or Cursor's
+mimir-ingest run --model qwen2.5:1.5b    # classify with a local Ollama model instead
+mimir-ingest report                      # counts per category, straight from the store
+```
+
+It writes to the same store as `mimir-mcp` (`~/.mimir/memory.db`, or
+`MIMIR_DB_PATH`; override with `mimir-ingest --db PATH run`), so a connected agent
+sees the backfilled work immediately. Re-running is safe: each episode's id comes
+from its transcript, so a re-ingested episode is updated in place, not duplicated.
+
+| `--source` | Reads | Notes |
+|---|---|---|
+| `claude-code` (default) | `~/.claude/projects/*/*.jsonl` | one file per session; sub-agent branches are skipped |
+| `cursor` | Cursor's `state.vscdb` in `globalStorage` (macOS, Linux, Windows paths handled) | opened read-only; only some messages carry a timestamp, so untimed ones inherit the previous one's |
+
+**How a session becomes experiences.** Each session is split into episodes at
+30-minute gaps, since one session often spans unrelated tasks. Each episode is
+classified as `feature`, `fix`, `refactor`, or `other`, then stored through
+`record_conversation()`, so it gets the same dedupe and provenance as any other
+distilled transcript. Without `--model`, a keyword heuristic classifies. The task
+is the user's opening message, and the action is what the assistant said it did.
+With `--model`, a local Ollama model writes a short task and action. If it errors,
+times out, or replies with something unusable, that episode falls back to the
+heuristic, so one bad reply never stalls a run.
+
+**Outcomes are inferred, not observed.** Nothing ran a test, so success or failure
+is read from the user's own reaction at the end of the episode ("works now" vs
+"still broken"). Episodes with no clear reaction are stored as `partial`. Treat
+these rows as weaker evidence than a live `record()` call. Their context
+(`agent`, `session_id`, `category`, and `distiller`) lets you keep them apart:
+
+```python
+memory.recall("flaky deploy", context={"agent": "claude-code"})  # only ingested work
+```
+
+**Privacy.** Everything stays local. Tool inputs and outputs are cut to 200-character
+previews at read time, so full file contents and command output are never stored.
+`--model` only ever calls a locally running Ollama, never a hosted API.
+
+`--limit N` caps how many sessions a run processes, which is handy for a first
+trial. Codex support is planned once its log format is confirmed against real
+samples.
+
 ## Recommendations
 
 `recommend()` aggregates past experiences for a task and returns the best action.
@@ -386,6 +472,7 @@ ranking.
 | **4: Strategy extraction** | Turn experiences into reusable strategies with confidence | Planned |
 | **5: Recommendation engine** | `recommend()`: rank strategies for a new task | ✅ Beta-posterior confidence over relevance/recency-weighted evidence, pluggable action clustering (non-LLM) |
 | **6: Shared org memory** | Multiple agents learn from a shared store | ✅ MCP server over a shared SQLite file; Postgres backend still future |
+| **Session backfill** | `mimir-ingest`: turn existing coding-agent session logs into experiences | ✅ Claude Code and Cursor; Codex planned |
 | **Hybrid retrieval** | Keyword + vector recall, optional sqlite-vec ANN index | ✅ Done |
 | **Reliability** | Versioned schema with a migration runner; staleness via `superseded_by` and time decay | ✅ Done |
 | **Quality eval** | Labeled recall@k / MRR / recommendation-accuracy gate in CI | ✅ Done |
@@ -413,6 +500,7 @@ What works today, with no LLM anywhere in the read or write path:
 - **Staleness handling** through explicit superseding and optional time decay.
 - **An MCP server**, so Claude Code, Codex, and Cursor can share one memory without any code.
 - **Conversation distillation** behind a pluggable seam, for turning a finished transcript into an experience.
+- **Session backfill**, `mimir-ingest`, so memory starts from your existing Claude Code and Cursor history instead of empty.
 - **Reflection**, `reflect()`, synthesizing a pattern across a set of experiences behind the same kind of pluggable seam. Stored as a `Reflection`, and rebuildable rather than authoritative; it does not yet feed back into `recall()` or `recommend()`.
 - **Reliability**: versioned schema with a migration runner, concurrent reads under WAL, and a recall@k / recommendation-accuracy gate in CI.
 
