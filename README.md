@@ -174,13 +174,15 @@ cd mimir
 pip install -e ".[dev]"
 ```
 
-Changes flow through three branches. Open pull requests against `devel`, the default branch:
+There are two long-lived branches. `main` is where development happens: open pull requests against it. `staging` holds release candidates:
 
 ```
-feature branch ──PR──► devel ──PR──► staging ──PR──► main ──GitHub Release──► PyPI
+feature branch ──PR──► main ──PR──► staging ──GitHub Release──► PyPI
                                       │
                                       └─ every push publishes <version>.devN to TestPyPI
 ```
+
+Cut each GitHub Release from `staging`, once the release candidate there has been tried.
 
 To try the current release candidate before it reaches PyPI:
 
@@ -189,7 +191,7 @@ pip install --pre --index-url https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ mimir-learn
 ```
 
-The extra index is there because TestPyPI doesn't host Mimir's dependencies. Bump `version` in `pyproject.toml` on `devel` when work on a new release starts, so staging builds are numbered as pre-releases of that version.
+The extra index is there because TestPyPI doesn't host Mimir's dependencies. Bump `version` in `pyproject.toml` on `main` when work on a new release starts, so staging builds are numbered as pre-releases of that version.
 
 **Requirements:** Python 3.10 or newer, tested in CI on 3.10 through 3.14 (Linux, macOS, Windows). Supporting the older end matters for agents, which run on whatever Python their host ships, and 3.10 is still the default on several current Linux distributions. There are no required external services: storage is a local SQLite file, and semantic search is an optional extra.
 
