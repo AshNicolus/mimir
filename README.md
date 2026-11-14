@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/mimir-learn.svg)](https://pypi.org/project/mimir-learn/)
 [![Python](https://img.shields.io/pypi/pyversions/mimir-learn.svg)](https://pypi.org/project/mimir-learn/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/AshNicolus/mimir/blob/main/LICENSE)
 
 **Experience-driven memory for autonomous agents.** Mimir helps agents learn from their past successes and failures instead of starting from scratch on every task.
 
@@ -173,6 +173,13 @@ For development:
 git clone https://github.com/AshNicolus/mimir.git
 cd mimir
 pip install -e ".[dev]"
+```
+
+The docs site is built from this README and the [Playbook](PLAYBOOK.md), so edit those files rather than anything under `docs/`. To preview it (needs Python 3.11 or newer):
+
+```bash
+pip install -e ".[docs]"
+zensical serve        # http://localhost:8000
 ```
 
 There are two long-lived branches. `main` is where development happens: open pull requests against it. `staging` holds release candidates:
@@ -544,7 +551,7 @@ What works today, with no LLM anywhere in the read or write path:
 - **Reflection**, `reflect()`, synthesizing a pattern across a set of experiences behind the same kind of pluggable seam. Stored as a `Reflection`, and rebuildable rather than authoritative; it does not yet feed back into `recall()` or `recommend()`.
 - **Reliability**: versioned schema with a migration runner, concurrent reads under WAL, and a recall@k / recommendation-accuracy gate in CI.
 
-Not built yet: materialized strategy rows and a pgvector index for the Postgres backend. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
+Not built yet: materialized strategy rows and a pgvector index for the Postgres backend. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](https://github.com/AshNicolus/mimir/blob/main/examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
