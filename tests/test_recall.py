@@ -241,7 +241,7 @@ def hydration_count(memory, query, k):
 def test_recall_does_not_scale_with_store_size():
     # Recall must bound how many rows it hydrates as the store grows.
     small, big = Mimir(":memory:"), Mimir(":memory:")
-    if not small.storage.fts_enabled:
+    if not getattr(small.storage, "fts_enabled", True):  # Postgres always has full-text search
         small.close()
         big.close()
         pytest.skip("FTS5 not available; fallback search scans the full table")

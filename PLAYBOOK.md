@@ -78,6 +78,7 @@ optional extras add more, and you can skip them until you need them:
 pip install "mimir-learn[embeddings]"  # local embeddings (sentence-transformers, numpy)
 pip install "mimir-learn[vector]"      # sqlite-vec index for fast vector search
 pip install "mimir-learn[mcp]"         # MCP server for Claude Code, Codex, and friends
+pip install "mimir-learn[postgres]"    # Postgres backend for many concurrent writers
 ```
 
 Mimir needs Python 3.10 or newer and runs on Linux, macOS, and Windows.
@@ -543,6 +544,11 @@ interface.
 - Concurrency. A file-backed store runs in SQLite WAL mode. Each reader thread
   gets its own connection so reads scale across threads, while writes are
   serialized. Reading and writing from several threads is safe.
+- Many machines. Pass a `postgresql://` URL instead of a file path, after
+  `pip install "mimir-learn[postgres]"`. Writers on many processes and machines
+  can then share one store without serializing on a file, and ranking matches
+  SQLite exactly. `PostgresStorage(url, schema="team_a")` keeps separate stores
+  in one database. See the README's Postgres section for the details.
 - Schema. The database is versioned with a forward-only migration runner, so
   opening a file written by an older version upgrades it in place.
 - Lifecycle. Call `close()` when done, or use a `with` block. `count()` returns
@@ -1051,9 +1057,9 @@ reads scale across threads and writes are serialized.
 Mimir is built around swappable parts, so you can grow it without rewriting
 the rest. Pass the first three to the constructor.
 
-- `Storage` decides where experiences live. `SQLiteStorage` ships by default.
-  Implement the `Storage` interface for another backend, such as Postgres for
-  concurrent multi-agent writes.
+- `Storage` decides where experiences live. `SQLiteStorage` is the default and
+  `PostgresStorage` ships for concurrent multi-agent writes. Implement the
+  `Storage` interface for any other backend.
 - `Embedder` decides how text becomes a vector. `NullEmbedder` (keyword only) is
   the default. Implement `embed(text)` for local or API embeddings.
 - `ActionClusterer` decides how equivalent actions are grouped. `ExactClusterer`

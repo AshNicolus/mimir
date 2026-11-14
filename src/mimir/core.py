@@ -20,7 +20,8 @@ from .ranking import (
     time_decay,
 )
 from .reflect import Reflection, Reflector, reflection_id
-from .storage import SQLiteStorage, Storage
+from .storage import PostgresStorage, SQLiteStorage, Storage
+from .storage.postgres import is_postgres_url
 
 
 class Mimir:
@@ -35,7 +36,12 @@ class Mimir:
         half_life_days: float | None = None,
         query_cache_size: int = 256,
     ) -> None:
-        self.storage = storage or SQLiteStorage(db_path, clusterer=clusterer)
+        if storage is None:
+            if is_postgres_url(db_path):
+                storage = PostgresStorage(db_path, clusterer=clusterer)
+            else:
+                storage = SQLiteStorage(db_path, clusterer=clusterer)
+        self.storage = storage
         self.embedder = embedder or NullEmbedder()
         self.weight_by_relevance = weight_by_relevance
         # Age at which past evidence counts for half. None keeps all evidence equal.
