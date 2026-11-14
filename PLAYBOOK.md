@@ -811,6 +811,14 @@ Three rules keep distilled memory trustworthy:
   the row instead of duplicating it, and you can audit or supersede everything a
   given distiller wrote.
 
+One more rule applies to the distiller you write: **the action must describe
+what was done in this conversation.** `recommend` pools evidence by action text
+across every task, so a constant or generic action ("used tools: Bash", "made
+changes", "done") collects the wins of every conversation it was written for.
+It then outranks every real strategy for any task it matches, while telling the
+agent nothing. If a transcript has no clear action, abstain rather than fall
+back to a placeholder.
+
 ### An LLM distiller
 
 Any `messages -> Draft | None` function works. Here is one backed by the
@@ -850,6 +858,45 @@ not just this exact instance.
 Let the distiller fill in the outcome only when you have no better signal; a
 test result or an exit code is always worth more than the model's own reading
 of how the conversation went.
+
+### Backfilling from coding agent session logs
+
+Claude Code and Cursor already keep a raw history of every session.
+[mimir-ingest](https://github.com/AshNicolus/mimir-ingest) is a separate CLI
+that reads that history and writes it into a Mimir store through
+`record_conversation`. That way an agent can recall work it never explicitly
+recorded:
+
+```bash
+pip install git+https://github.com/AshNicolus/mimir-ingest   # not on PyPI yet
+mimir-ingest run --dry-run               # print what would be stored; writes nothing
+mimir-ingest run                         # heuristic classification, no model needed
+mimir-ingest run --model qwen2.5:1.5b    # or classify with a local Ollama model
+mimir-ingest run --source cursor         # Cursor instead of Claude Code
+mimir-ingest report                      # counts per category from the store
+```
+
+It splits each session into episodes at 30-minute gaps. It then classifies
+each episode as `feature`, `fix`, `refactor`, or `other`, and stores one
+experience per episode. It writes to the same default path as the MCP server
+(`~/.mimir/memory.db`, or `MIMIR_DB_PATH`). An MCP-connected agent sees the
+backfilled episodes immediately. Re-running is safe: the transcript-derived id
+updates an episode in place.
+
+Ingested rows are ordinary experiences with provenance in their context. Use
+the context to keep them apart from rows you recorded live:
+
+```python
+memory.recall("flaky deploy", context={"agent": "claude-code"})   # only ingested Claude Code work
+memory.recall("flaky deploy", context={"category": "fix"})
+```
+
+Each row's context records the source tool under `agent` (`claude-code` or
+`cursor`). It also records `session_id`, `category`, and the classifier as
+`distiller` (`heuristic` or `ollama`). Treat the outcome as weaker evidence
+than a live `record` call. Nothing ran a test, so it is inferred from the
+user's own reaction at the end of the episode ("works now" vs "still broken"),
+and an episode with no clear reaction is stored as `partial`.
 
 ## Reflecting across experiences
 
@@ -982,6 +1029,13 @@ results accumulate.
 default), a closely matching action can outrank a more proven but loosely related
 one. Pass `weight_by_relevance=False` to rank on track record alone.
 
+**One vague action wins every recommendation.** Many rows share the same
+generic action text, usually because a distiller or importer wrote a placeholder
+("done", "used tools: Bash") instead of describing the work. Evidence pools by
+action text, so the placeholder piles up wins across unrelated tasks. Find the
+rows with `recall` or `recent`, fix the distiller, then re-record. A re-recorded
+transcript replaces its old row.
+
 **Recall finds nothing for a paraphrase.** Keyword recall only matches shared
 words. Add an embedder for semantic recall.
 
@@ -996,8 +1050,8 @@ reads scale across threads and writes are serialized.
 
 ## Extending Mimir
 
-Mimir is built around three swappable parts, so you can grow it without rewriting
-the rest. Pass any of them to the constructor.
+Mimir is built around swappable parts, so you can grow it without rewriting
+the rest. Pass the first three to the constructor.
 
 - `Storage` decides where experiences live. `SQLiteStorage` ships by default.
   Implement the `Storage` interface for another backend, such as Postgres for
@@ -1008,6 +1062,8 @@ the rest. Pass any of them to the constructor.
   is the default, and `EmbeddingClusterer` or your own class can merge synonyms.
 - `Distiller` decides how a transcript becomes a draft experience. It is passed
   per call to `record_conversation` rather than to the constructor.
+- `Reflector` decides how a set of experiences becomes a reflection. Like a
+  distiller, it is passed per call, to `reflect`.
 
 ```python
 memory = Mimir(storage=MyStorage(), embedder=MyEmbedder(), clusterer=MyClusterer())
