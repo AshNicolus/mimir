@@ -102,14 +102,18 @@ def main():
 
     read_1t, read_4t = read_scaling()
 
-    print(json.dumps({
-        "record_ops_per_sec": round(N_RECORD / record_seconds),
-        "recall_p50_ms": round(recall_p50, 3),
-        "recall_p95_ms": round(recall_p95, 3),
-        "recommend_p50_ms": round(recommend_p50, 3),
-        "read_1thread_ops_per_sec": read_1t,
-        "read_4thread_ops_per_sec": read_4t,
-    }))
+    print(
+        json.dumps(
+            {
+                "record_ops_per_sec": round(N_RECORD / record_seconds),
+                "recall_p50_ms": round(recall_p50, 3),
+                "recall_p95_ms": round(recall_p95, 3),
+                "recommend_p50_ms": round(recommend_p50, 3),
+                "read_1thread_ops_per_sec": read_1t,
+                "read_4thread_ops_per_sec": read_4t,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

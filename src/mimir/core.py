@@ -122,9 +122,7 @@ class Mimir:
                 score = default_score(final)  # the draft's score graded a different verdict
         else:
             if draft.outcome is None:
-                raise ValueError(
-                    "no outcome: pass ground truth or use a distiller that infers it"
-                )
+                raise ValueError("no outcome: pass ground truth or use a distiller that infers it")
             final = draft.outcome
             if score is None:
                 score = draft.score if draft.score is not None else default_score(final)
@@ -178,12 +176,18 @@ class Mimir:
         outcome_val = outcome.value if isinstance(outcome, Outcome) else outcome
         width = k * 4  # over-fetch candidates before fusing and trimming to k
         keyword = self.storage.search(
-            query, k=width, outcome=outcome_val, context=context,
+            query,
+            k=width,
+            outcome=outcome_val,
+            context=context,
             include_superseded=include_superseded,
         )
         if self.embedder.enabled:
             vector = self.storage.vector_search(
-                self.embed_query(query), k=width, outcome=outcome_val, context=context,
+                self.embed_query(query),
+                k=width,
+                outcome=outcome_val,
+                context=context,
                 include_superseded=include_superseded,
             )
             candidates = reciprocal_rank_fusion(keyword, vector)

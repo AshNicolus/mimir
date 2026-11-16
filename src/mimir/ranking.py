@@ -45,8 +45,7 @@ def incomplete_beta(a: float, b: float, x: float) -> float:
     if x >= 1.0:
         return 1.0
     ln_front = (
-        math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
-        + a * math.log(x) + b * math.log1p(-x)
+        math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log1p(-x)
     )
     front = math.exp(ln_front)
     # The continued fraction converges quickly below this pivot; past it, the

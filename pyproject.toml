@@ -66,6 +66,11 @@ markers = ["sqlite_only: inspects SQLite internals; skipped when MIMIR_TEST_POST
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.format]
+# Python files only: the Markdown and notebook examples are laid out by hand
+# (aligned comments, compact calls) for reading, not for the formatter.
+exclude = ["*.md", "*.ipynb"]
+
 # Selected explicitly rather than inherited: ruff's defaults change between
 # releases, and a linter upgrade should not turn a green build red on its own.
 [tool.ruff.lint]

@@ -140,10 +140,14 @@ def test_recent_orders_by_utc_instant_across_timezones(memory):
     from datetime import datetime, timedelta, timezone
 
     ist = timezone(timedelta(hours=5, minutes=30))
-    memory.write(Experience(task="early", action="a",
-                            created_at=datetime(2026, 1, 1, 11, 0, tzinfo=ist)))  # 05:30 UTC
-    memory.write(Experience(task="late", action="b",
-                            created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)))
+    memory.write(
+        Experience(task="early", action="a", created_at=datetime(2026, 1, 1, 11, 0, tzinfo=ist))
+    )  # 05:30 UTC
+    memory.write(
+        Experience(
+            task="late", action="b", created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+        )
+    )
 
     assert [e.task for e in memory.recent(2)] == ["late", "early"]
 

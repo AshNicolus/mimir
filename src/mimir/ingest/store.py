@@ -41,8 +41,10 @@ def store_episode(
 ) -> Experience | None:
     # We infer the outcome, we do not observe it, so it belongs on the draft
     # (mimir-learn's "best guess" side), never asserted as ground truth.
-    resolved = bucketed if bucketed.outcome is not None else bucketed.model_copy(
-        update={"outcome": infer_outcome(episode)}
+    resolved = (
+        bucketed
+        if bucketed.outcome is not None
+        else bucketed.model_copy(update={"outcome": infer_outcome(episode)})
     )
     messages = episode_to_messages(episode)
     return memory.record_conversation(

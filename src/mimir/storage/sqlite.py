@@ -346,9 +346,7 @@ class SQLiteStorage(Storage):
             self.clusters = None  # a re-record moved clusters; rebuild lazily
         elif self.clusters is not None:
             current = self.clusters.get(action_norm)
-            self.clusters[action_norm] = (
-                exp.action if current is None else min(current, exp.action)
-            )
+            self.clusters[action_norm] = exp.action if current is None else min(current, exp.action)
 
     def search(
         self,

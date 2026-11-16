@@ -1,8 +1,8 @@
 """mimir-ingest: turn raw agent session logs into Mimir experiences.
 
-    mimir-ingest run --model qwen2.5:1.5b
-    mimir-ingest run --dry-run
-    mimir-ingest report
+mimir-ingest run --model qwen2.5:1.5b
+mimir-ingest run --dry-run
+mimir-ingest report
 """
 
 from __future__ import annotations
