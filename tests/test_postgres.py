@@ -228,8 +228,12 @@ def test_ann_respects_filters_and_never_returns_short(schema):
     m = store(schema)
     try:
         for i, vec in enumerate(points(60, 4, seed=3)):
-            outcome = "failure" if i % 3 == 0 else "success"
-            m.write(embedded(f"task {i}", vec, outcome=outcome, context={"team": f"t{i % 2}"}))
+            outcome, score = ("failure", 0.0) if i % 3 == 0 else ("success", 1.0)
+            m.write(
+                embedded(
+                    f"task {i}", vec, outcome=outcome, score=score, context={"team": f"t{i % 2}"}
+                )
+            )
         old = m.write(embedded("stale", [1.0, 1.0, 1.0, 1.0]))
         m.supersede(old.id, m.write(embedded("fresh", [1.0, 1.0, 1.0, 0.9])).id)
 
