@@ -17,7 +17,7 @@
       "version": "0.2.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
-        {"type": "named", "name": "--from", "value": "mimir-learn[mcp]"},
+        {"type": "named", "name": "--from", "value": "mimir-learn[mcp]==0.2.0"},
         {"type": "positional", "value": "mimir-mcp"}
       ],
       "transport": {"type": "stdio"},

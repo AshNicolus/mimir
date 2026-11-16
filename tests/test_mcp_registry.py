@@ -18,6 +18,11 @@ def test_server_json_matches_package():
     ]
     assert server["version"] == version
     assert [p["version"] for p in server["packages"]] == [version]
+    # uvx must install the release this entry declares, not whatever is latest or cached.
+    from_args = [
+        a["value"] for a in server["packages"][0]["runtimeArguments"] if a.get("name") == "--from"
+    ]
+    assert from_args == [f"mimir-learn[mcp]=={version}"]
     assert f"<!-- mcp-name: {server['name']} -->" in (ROOT / "README.md").read_text(
         encoding="utf-8"
     )

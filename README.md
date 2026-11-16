@@ -255,7 +255,7 @@ pip install --pre --index-url https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ mimir-learn
 ```
 
-The extra index is there because TestPyPI doesn't host Mimir's dependencies. Bump `version` in `pyproject.toml` (and both versions in `server.json`, which a test checks) on `main` when work on a new release starts, so staging builds are numbered as pre-releases of that version.
+The extra index is there because TestPyPI doesn't host Mimir's dependencies. Bump `version` in `pyproject.toml` (and the three versions in `server.json`, which a test checks) on `main` when work on a new release starts, so staging builds are numbered as pre-releases of that version.
 
 **Requirements:** Python 3.10 or newer, tested in CI on 3.10 through 3.14 on Linux, and on 3.10 and 3.14 on macOS and Windows. Supporting the older end matters for agents, which run on whatever Python their host ships, and 3.10 is still the default on several current Linux distributions. There are no required external services: storage is a local SQLite file, and semantic search is an optional extra.
 
