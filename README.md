@@ -11,6 +11,55 @@
 
 **Documentation:** [ashnicolus.github.io/mimir](https://ashnicolus.github.io/mimir/)
 
+## See it work
+
+`pip install mimir-learn`, then paste this into Python:
+
+```python
+from mimir import Mimir
+
+with Mimir(":memory:") as memory:  # throwaway store; Mimir() persists to ~/.mimir/memory.db
+    # Past tickets: one fix keeps working...
+    for task in ["Login is slow at peak", "Login times out under load", "Slow login after deploy"]:
+        memory.record(task=task, action="Cache session lookups in Redis", outcome="success", score=0.9)
+
+    # ...and the obvious fix keeps failing.
+    for task in ["Login is slow at peak", "Login times out under load", "Slow login on Mondays"]:
+        memory.record_failure(task=task, action="Raise the DB connection pool size",
+                              reason="Latency unchanged; the bottleneck was session lookups")
+
+    # A new ticket arrives:
+    print(memory.recommend("login is slow again"))
+```
+
+```text
+Recommended strategy: 'Cache session lookups in Redis'
+  confidence: 0.56
+  based on 3 experiences (3 success / 0 failure)
+```
+
+The pool-size change never comes back, because it has only ever failed. And 3 out
+of 3 gives a confidence of 0.56, not 1.0: three tries is not much evidence, and
+the number rises as more tickets confirm the fix.
+
+**Use Claude Code or Cursor?** Your past sessions are already a track record:
+
+```bash
+mimir-ingest run --dry-run   # show what Mimir would learn from your history; writes nothing
+```
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b1d77e72c3e4d5badd17a314e05d6a26e579088d4272762e9f08e08d8d1c99d3 -->
+
+For Cursor:
+
+```bash
+mimir-ingest run --source cursor --dry-run
+```
+
+<!-- /coderabbit-ai-generated:v1 -->
+
 ---
 
 ## The problem
