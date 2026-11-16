@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import threading
+import warnings
 from contextlib import contextmanager
 from datetime import timezone
 from urllib.parse import urlsplit, urlunsplit
@@ -25,6 +26,7 @@ from ..models import Experience, Outcome
 from ..reflect import Reflection
 from .base import ActionStat, Storage
 from .query import context_matches, context_sql_filters, query_terms, tokenize
+from .sqlite import VectorIndexWarning
 
 try:
     import psycopg
@@ -36,6 +38,14 @@ except ImportError:  # optional: the postgres extra
 
 SCHEMA_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
 K1, B = 1.2, 0.75  # SQLite FTS5's bm25() defaults
+
+VEC_INDEX = "experiences_embedding_hnsw"
+VEC_INDEX_DIM = re.compile(r"vector\((\d+)\)")
+VEC_MAX_DIM = 2000  # pgvector's HNSW limit for the vector type
+# shortcut: building HNSW over a large existing store blocks writers for a long
+# time, so past this many embedded rows the store warns with the SQL to run by
+# hand (CONCURRENTLY) and keeps the scan. Raise it if startup can afford more.
+VEC_INLINE_BUILD_MAX = 10_000
 
 # BM25 per matching row, as SQLite FTS5 computes it: IDF floored at 1e-6, and
 # corpus statistics (row count, average length, document frequency) taken over
@@ -151,6 +161,10 @@ class PostgresStorage(Storage):
         # process creates is unseen here until a delete() resets the cache. Only
         # matters for EmbeddingClusterer; move clusters into a table if it bites.
         self.clusters: dict[str, str] | None = None
+        self.vec_schema: str | None = None  # where pgvector lives, if installed
+        self.vec_dim: int | None = None  # dimension the ANN index covers
+        self.vec_skipped = False  # index deliberately not built (too big, too wide)
+        self.warned_vec = False
         self.migrate()
 
     def connect(self):
@@ -179,8 +193,101 @@ class PostgresStorage(Storage):
                     if version < target:
                         step(conn)
                         conn.execute("INSERT INTO mimir_schema (version) VALUES (%s)", (target,))
+            self.setup_vector_index(conn)
         finally:
             conn.close()
+
+    def setup_vector_index(self, conn) -> None:
+        """Find (or install) pgvector and this store's ANN index, if any.
+
+        Without the extension, vector_search keeps its full scan. The
+        extension lives outside the store's schema (usually public), so all
+        pgvector names are schema-qualified with ``self.vec_schema``.
+        """
+        self.vec_schema = self.vector_extension_schema(conn)
+        if self.vec_schema is None:
+            try:
+                with conn.transaction():  # a failure must not abort anything else
+                    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            except psycopg.Error:
+                pass  # no privilege or not installed on the server: scan instead
+            self.vec_schema = self.vector_extension_schema(conn)
+        if self.vec_schema is None:
+            return
+        self.vec_dim = self.index_dim(conn)
+        if self.vec_dim is None:
+            row = conn.execute(
+                sql.SQL(
+                    "SELECT cardinality(embedding) AS dim FROM {}.experiences "
+                    "WHERE embedding IS NOT NULL LIMIT 1"
+                ).format(sql.Identifier(self.schema))
+            ).fetchone()
+            if row is not None:
+                self.ensure_vector_index(conn, row["dim"])
+
+    def vector_extension_schema(self, conn) -> str | None:
+        row = conn.execute(
+            "SELECT n.nspname FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'"
+        ).fetchone()
+        return row["nspname"] if row else None
+
+    def index_dim(self, conn) -> int | None:
+        row = conn.execute(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = %s AND indexname = %s",
+            (self.schema, VEC_INDEX),
+        ).fetchone()
+        match = VEC_INDEX_DIM.search(row["indexdef"]) if row else None
+        return int(match.group(1)) if match else None
+
+    def ensure_vector_index(self, conn, dim: int) -> None:
+        """Create the HNSW index for ``dim``-dimension embeddings, once per store.
+
+        It indexes the existing ``embedding`` column through a cast, so rows
+        written before the index existed (or by older Mimir versions) are
+        covered with no backfill. Rows of other dimensions stay scan-only.
+        """
+        if dim > VEC_MAX_DIM:
+            self.warn_vec(f"embeddings have {dim} dimensions, past pgvector's {VEC_MAX_DIM}")
+            self.vec_skipped = True
+            return
+        schema, vs = sql.Identifier(self.schema), sql.Identifier(self.vec_schema)
+        with conn.transaction():
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))", (f"mimir.vector.{self.schema}",)
+            )
+            existing = self.index_dim(conn)  # another process may have built it
+            if existing is None:
+                rows = conn.execute(
+                    sql.SQL(
+                        "SELECT count(*) AS n FROM {}.experiences WHERE embedding IS NOT NULL"
+                    ).format(schema)
+                ).fetchone()["n"]
+                ddl = sql.SQL(
+                    "CREATE INDEX {concurrently}IF NOT EXISTS {index} ON {schema}.experiences "
+                    "USING hnsw ((embedding::{vs}.vector({dim})) {vs}.vector_cosine_ops) "
+                    "WHERE cardinality(embedding) = {dim}"
+                )
+                params = dict(index=sql.Identifier(VEC_INDEX), schema=schema, vs=vs, dim=dim)
+                if rows > VEC_INLINE_BUILD_MAX:
+                    statement = ddl.format(concurrently=sql.SQL("CONCURRENTLY "), **params)
+                    self.warn_vec(
+                        f"{rows} embedded rows is too many to index at startup; run "
+                        f"{statement.as_string(conn)} once"
+                    )
+                    self.vec_skipped = True
+                    return
+                conn.execute(ddl.format(concurrently=sql.SQL(""), **params))
+                existing = dim
+        self.vec_dim = existing
+
+    def warn_vec(self, reason: str) -> None:
+        if self.warned_vec:
+            return
+        self.warned_vec = True
+        warnings.warn(
+            f"{reason}; vector recall falls back to a full scan", VectorIndexWarning, stacklevel=4
+        )
 
     @contextmanager
     def reading(self):
@@ -235,6 +342,15 @@ class PostgresStorage(Storage):
                         "doc_len": len(tokens),
                     },
                 )
+            if exp.embedding and self.vec_schema and not self.vec_skipped:
+                if self.vec_dim is None:  # first embedding fixes the index dimension
+                    with self.reading() as conn:
+                        self.ensure_vector_index(conn, len(exp.embedding))
+                elif len(exp.embedding) != self.vec_dim:
+                    self.warn_vec(
+                        f"embedding has {len(exp.embedding)} dimensions but the vector "
+                        f"index holds {self.vec_dim}, so rows like it are not indexed"
+                    )
 
     def delete(self, experience_id: str) -> bool:
         with self.cluster_lock, self.writing() as conn:
@@ -376,10 +492,67 @@ class PostgresStorage(Storage):
         context: dict | None = None,
         include_superseded: bool = False,
     ) -> list[tuple[Experience, float]]:
-        # shortcut: a full scan with cosine in Python, like SQLite without
-        # sqlite-vec. Fine for thousands of rows; add a pgvector index for more.
         if not embedding:
             return []
+        # Context keys SQL can't check are filtered in Python after the LIMIT,
+        # which could leave fewer than k; those queries take the exact scan.
+        fully_pushed = not context or len(context_sql_filters(context)) == len(context)
+        if self.vec_dim == len(embedding) and k is not None and fully_pushed:
+            found = self.vector_search_ann(embedding, k, outcome, context, include_superseded)
+            if found is not None:
+                return found
+        return self.vector_search_scan(embedding, k, outcome, context, include_superseded)
+
+    def vector_search_ann(
+        self,
+        embedding: list[float],
+        k: int,
+        outcome: str | None,
+        context: dict | None,
+        include_superseded: bool,
+    ) -> list[tuple[Experience, float]] | None:
+        """Nearest neighbours from the HNSW index, or None to fall back to the scan.
+
+        HNSW returns at most ``hnsw.ef_search`` candidates and filters after,
+        so a filtered query can come back short. Short results go to the exact
+        scan rather than silently returning fewer than were asked for.
+        """
+        filters, params = self.filter_sql(outcome, context, include_superseded)
+        dim, vs = self.vec_dim, sql.Identifier(self.vec_schema)
+        # Must match the index expression and predicate exactly, or Postgres
+        # quietly falls back to a sequential scan.
+        distance = sql.SQL(
+            "(e.embedding::{vs}.vector({dim})) OPERATOR({vs}.<=>) %(q)s::{vs}.vector({dim})"
+        ).format(vs=vs, dim=sql.Literal(dim))
+        query = sql.SQL(
+            "SELECT e.*, {distance} AS distance FROM experiences e "
+            "WHERE cardinality(e.embedding) = {dim}{filters} ORDER BY {distance} LIMIT %(limit)s"
+        ).format(distance=distance, dim=sql.Literal(dim), filters=sql.SQL(filters))
+        params.update(q="[" + ",".join(str(float(x)) for x in embedding) + "]", limit=k)
+        with self.reading() as conn, conn.transaction():
+            # ef_search caps HNSW's candidate list; pgvector accepts 1 to 1000.
+            conn.execute(sql.SQL("SET LOCAL hnsw.ef_search = {}").format(max(40, min(k, 1000))))
+            rows = conn.execute(query, params).fetchall()
+        if len(rows) < k:
+            return None
+        scored = []
+        for row in rows:
+            exp = self.row_to_experience(row)
+            sim = 1.0 - row["distance"]
+            if sim > 0:
+                scored.append((exp, sim))
+        return scored
+
+    def vector_search_scan(
+        self,
+        embedding: list[float],
+        k: int | None,
+        outcome: str | None,
+        context: dict | None,
+        include_superseded: bool,
+    ) -> list[tuple[Experience, float]]:
+        """Exact cosine over every embedded row: the fallback without pgvector, or
+        for embeddings whose dimension the index doesn't cover."""
         filters, params = self.filter_sql(outcome, context, include_superseded)
         with self.reading() as conn:
             rows = conn.execute(

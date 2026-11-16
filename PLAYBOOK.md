@@ -505,6 +505,14 @@ a `VectorIndexWarning`: recall still returns the right answers through the cosin
 scan, but it is no longer using the index. Rebuild the store to re-index under
 the new embedder.
 
+On the Postgres backend the index is [pgvector](https://github.com/pgvector/pgvector)'s
+HNSW, used automatically when the server has the extension, with the same
+first-dimension rule and warning. It is approximate: a search can occasionally
+miss a slightly closer match, and a filtered search that comes back short is
+re-run as an exact scan. A store that already holds more than 10,000 embedded
+rows isn't indexed at startup, since the build would block writers; the warning
+gives the `CREATE INDEX CONCURRENTLY` statement to run once.
+
 ### The query embedding cache
 
 Every `recall` embeds the query text, and embedding is the expensive step with a

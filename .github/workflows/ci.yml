@@ -87,12 +87,19 @@ jobs:
 
   # The whole suite against a real Postgres: every in-memory store in the tests
   # becomes a fresh schema there (tests/conftest.py).
+  # Two images: plain Postgres proves the scan fallback when pgvector is
+  # missing, pgvector/pgvector proves the HNSW index is built and used.
   test-postgres:
+    name: test-postgres (${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["postgres:16", "pgvector/pgvector:pg16"]
     services:
       postgres:
-        image: postgres:16
+        image: ${{ matrix.image }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -101,6 +108,7 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       MIMIR_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      MIMIR_TEST_PGVECTOR: ${{ startsWith(matrix.image, 'pgvector/') && '1' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -113,10 +121,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,postgres]"
       - name: Postgres-only tests (must run, not skip)
-        # A skip here means the DSN or driver is missing, which would leave
-        # this job green with no Postgres coverage at all.
+        # A skip means the DSN, driver or extension is missing, which would
+        # leave this job green with no coverage. Only the pgvector tests may
+        # skip, and only on the plain image.
         run: |
           pytest -q -rs tests/test_postgres.py | tee pg.log
-          ! grep -q "skipped" pg.log
+          if [ -n "$MIMIR_TEST_PGVECTOR" ]; then
+            ! grep -q "^SKIPPED" pg.log
+          else
+            ! grep "^SKIPPED" pg.log | grep -v "MIMIR_TEST_PGVECTOR"
+          fi
       - name: Whole suite on Postgres
         run: pytest -q
