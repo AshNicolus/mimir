@@ -135,15 +135,20 @@ strategy = memory.recommend("login timeout")
 
 ## How it differs from AGENTS.md / CLAUDE.md
 
+AGENTS.md holds the rules someone wrote. Mimir holds what your agents tried and
+whether it worked.
+
 | | AGENTS.md / CLAUDE.md | Mimir |
 |---|---|---|
-| Knowledge type | Static, hand-written rules | Dynamic, learned from outcomes |
-| Updates | Manually edited | Updates itself from results |
-| Example | "Use FastAPI. Use PostgreSQL." | "Redis caching solved auth latency 23/25 times (92%)." |
-| Failures | Not tracked | First-class: agents stop repeating mistakes |
+| Holds | Rules and conventions | Every attempt: task, action, outcome |
+| Kept current by | Hand edits | Each recorded outcome; stale evidence is superseded or fades with a half-life |
+| Failures | Only if someone writes them down | Recorded with the reason; an action that has never worked is never recommended |
+| Token cost | The whole file, every session, growing with each rule | Only what the task needs: one recommendation, or the 5 most relevant attempts |
+| Team state | One repo's notes, as of the last edit | One shared store (SQLite on one machine, Postgres across many): what has been tried, what worked, what is a dead end |
+| Trust | Whatever the file says | A confidence from real counts, citing the experiences behind it |
 
-AGENTS.md answers *"What should the agent remember?"*
-Mimir answers *"How does an agent accumulate experience and become wiser over time?"*
+Use both: AGENTS.md for what doesn't change ("use FastAPI"), Mimir for what the
+evidence decides ("the Redis fix works here; the pool-size bump doesn't").
 
 ## Design principles
 
