@@ -20,7 +20,7 @@
 ```python
 from mimir import Mimir
 
-with Mimir(":memory:") as memory:  # throwaway store; Mimir() persists to ~/.mimir/memory.db
+with Mimir(":memory:") as memory:  # throwaway store; Mimir() saves to ./mimir.db
     # Past tickets: one fix keeps working...
     for task in ["Login is slow at peak", "Login times out under load", "Slow login after deploy"]:
         memory.record(task=task, action="Cache session lookups in Redis", outcome="success", score=0.9)
@@ -104,20 +104,21 @@ And it costs almost nothing to adopt: one `pip install`, a local SQLite file, no
 
 ## The idea
 
-Instead of storing documents, embeddings, and metadata, Mimir stores **experiences**:
+Mimir stores **experiences**, not documents:
 
 ```
-Problem  →  Action  →  Outcome  →  Confidence  →  Context  →  Time
+Task  →  Action  →  Outcome  →  Score  →  Context  →  Time
 ```
 
-From a stream of experiences, Mimir reflects, extracts reusable strategies, and recommends actions for new tasks, so the agent gets measurably better over time.
+Three calls cover it: `record` after a task, then `recall` and `recommend` before
+the next one.
 
 ```python
 from mimir import Mimir
 
-memory = Mimir()
+memory = Mimir()  # SQLite file mimir.db in the current directory
 
-# Record what happened
+# After a task: what was done and how it went
 memory.record(
     task="Fix authentication timeout",
     action="Implemented Redis caching",
@@ -125,12 +126,13 @@ memory.record(
     score=0.95,
 )
 
-# Recall relevant past experience
+# Before the next one: relevant past attempts, failures included
 past = memory.recall("authentication latency")
 
-# Get a recommended strategy with confidence
-strategy = memory.recommend("login timeout")
-# -> Strategy: "Redis caching"  |  confidence: 0.80  |  based on 23 successes / 2 failures
+# ...and the action with the best track record
+rec = memory.recommend("login timeout")
+rec.recommended_action  # "Implemented Redis caching"
+rec.confidence          # 0.23 after one success; rises as successes add up
 ```
 
 ## How it differs from AGENTS.md / CLAUDE.md
