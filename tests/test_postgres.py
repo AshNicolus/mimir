@@ -162,3 +162,140 @@ def test_rerecord_replaces_the_whole_row(schema):
         assert [e.action for e in m.recall("deploy flaky")] == ["pin the base image"]
     finally:
         m.close()
+
+
+# The pgvector index. These need a server with the extension (CI's
+# pgvector/pgvector image); without it the store must fall back to the scan,
+# which the whole suite covers when MIMIR_TEST_PGVECTOR is unset.
+needs_vec = pytest.mark.skipif(
+    not (DSN and os.environ.get("MIMIR_TEST_PGVECTOR")),
+    reason="set MIMIR_TEST_POSTGRES_DSN and MIMIR_TEST_PGVECTOR=1 to run",
+)
+
+
+def embedded(task, vec, **fields):
+    from mimir import Experience
+
+    return Experience(task=task, action=f"act on {task}", embedding=vec, **fields)
+
+
+def points(n, dim, seed):
+    import random
+
+    rng = random.Random(seed)
+    return [[rng.uniform(-1, 1) for _ in range(dim)] for _ in range(n)]
+
+
+@needs_vec
+def test_index_is_built_on_first_embedding_and_used(schema):
+    m = store(schema)
+    try:
+        assert m.storage.vec_schema is not None
+        m.write(embedded("first", [1.0, 0.0, 0.0]))
+        assert m.storage.vec_dim == 3
+        with m.storage.reading() as conn, conn.transaction():
+            conn.execute("SET LOCAL enable_seqscan = off")
+            plan = conn.execute(
+                "EXPLAIN SELECT id FROM experiences e WHERE cardinality(e.embedding) = 3 "
+                f"ORDER BY (e.embedding::{m.storage.vec_schema}.vector(3)) "
+                f"OPERATOR({m.storage.vec_schema}.<=>) '[1,0,0]'::{m.storage.vec_schema}.vector(3) "
+                "LIMIT 5"
+            ).fetchall()
+        assert postgres.VEC_INDEX in " ".join(r["QUERY PLAN"] for r in plan)
+    finally:
+        m.close()
+
+
+@needs_vec
+def test_ann_returns_the_same_neighbours_as_the_exact_scan(schema):
+    m = store(schema)
+    try:
+        for i, vec in enumerate(points(300, 8, seed=1)):
+            m.write(embedded(f"task {i}", vec))
+        assert m.storage.vec_dim == 8
+        for query in points(10, 8, seed=2):
+            ann = m.storage.vector_search_ann(query, 5, None, None, False)
+            scan = m.storage.vector_search_scan(query, 5, None, None, False)
+            assert ann is not None
+            # Ids, not scores: the index compares in float4, the scan in float8.
+            assert [e.id for e, _ in ann] == [e.id for e, _ in scan]
+    finally:
+        m.close()
+
+
+@needs_vec
+def test_ann_respects_filters_and_never_returns_short(schema):
+    m = store(schema)
+    try:
+        for i, vec in enumerate(points(60, 4, seed=3)):
+            outcome = "failure" if i % 3 == 0 else "success"
+            m.write(embedded(f"task {i}", vec, outcome=outcome, context={"team": f"t{i % 2}"}))
+        old = m.write(embedded("stale", [1.0, 1.0, 1.0, 1.0]))
+        m.supersede(old.id, m.write(embedded("fresh", [1.0, 1.0, 1.0, 0.9])).id)
+
+        q = [1.0, 1.0, 1.0, 1.0]
+        failures = m.storage.vector_search(q, k=5, outcome="failure")
+        assert len(failures) == 5 and all(e.outcome.value == "failure" for e, _ in failures)
+        team = m.storage.vector_search(q, k=5, context={"team": "t1"})
+        assert len(team) == 5 and all(e.context["team"] == "t1" for e, _ in team)
+        assert old.id not in [e.id for e, _ in m.storage.vector_search(q, k=5)]
+        # No row matches, so HNSW comes back short and the exact scan answers.
+        assert [e.task for e, _ in m.storage.vector_search(q, k=5, context={"team": "none"})] == []
+    finally:
+        m.close()
+
+
+@needs_vec
+def test_rows_written_before_the_index_are_covered(schema):
+    # Stores written by 0.2.0, or before pgvector was installed, already hold
+    # embeddings; reopening builds the index over them with no backfill.
+    m = store(schema)
+    vecs = points(20, 6, seed=4)
+    for i, vec in enumerate(vecs):
+        m.write(embedded(f"task {i}", vec))
+    with m.storage.reading() as conn:
+        conn.execute(f'DROP INDEX "{schema}".{postgres.VEC_INDEX}')
+    m.close()
+
+    reopened = store(schema)
+    try:
+        assert reopened.storage.vec_dim == 6
+        ann = reopened.storage.vector_search_ann(vecs[0], 1, None, None, False)
+        assert ann is not None and ann[0][0].task == "task 0"
+    finally:
+        reopened.close()
+
+
+@needs_vec
+def test_other_dimensions_warn_and_fall_back_to_the_scan(schema):
+    from mimir import VectorIndexWarning
+
+    m = store(schema)
+    try:
+        m.write(embedded("three", [1.0, 0.0, 0.0]))
+        with pytest.warns(VectorIndexWarning, match="not indexed"):
+            m.write(embedded("four", [0.0, 1.0, 0.0, 0.0]))
+        assert [e.task for e, _ in m.storage.vector_search([0.0, 1.0, 0.0, 0.0], k=1)] == ["four"]
+    finally:
+        m.close()
+
+
+@needs_vec
+def test_large_existing_stores_get_the_sql_instead_of_a_blocking_build(schema, monkeypatch):
+    from mimir import VectorIndexWarning
+
+    m = store(schema)
+    for i, vec in enumerate(points(3, 4, seed=5)):
+        m.write(embedded(f"task {i}", vec))
+    with m.storage.reading() as conn:
+        conn.execute(f'DROP INDEX "{schema}".{postgres.VEC_INDEX}')
+    m.close()
+
+    monkeypatch.setattr(postgres, "VEC_INLINE_BUILD_MAX", 2)
+    with pytest.warns(VectorIndexWarning, match="CREATE INDEX CONCURRENTLY"):
+        reopened = store(schema)
+    try:
+        assert reopened.storage.vec_dim is None and reopened.storage.vec_skipped
+        assert len(reopened.storage.vector_search([1.0, 0.0, 0.0, 0.0], k=2)) == 2  # scan works
+    finally:
+        reopened.close()
