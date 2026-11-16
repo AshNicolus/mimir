@@ -1,0 +1,7 @@
+# Formatting-only commits that `git blame` should skip, so a line is credited
+# to the change that actually wrote it. GitHub's blame view reads this file
+# automatically; for local blame, run once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Enforce ruff format in CI (#76): one-time `ruff format .` of the Python files
+64ac1f0d92a0f5d025e877ab47a56f48da5d4161
