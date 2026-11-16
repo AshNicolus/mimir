@@ -8,16 +8,16 @@
     "source": "github"
   },
   "websiteUrl": "https://ashnicolus.github.io/mimir/",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "mimir-learn",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
-        {"type": "named", "name": "--from", "value": "mimir-learn[mcp]==0.2.0"},
+        {"type": "named", "name": "--from", "value": "mimir-learn[mcp]==0.3.0"},
         {"type": "positional", "value": "mimir-mcp"}
       ],
       "transport": {"type": "stdio"},
