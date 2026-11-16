@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.AshNicolus/mimir",
+  "title": "Mimir",
+  "description": "Experience memory for agents: what worked, what failed, and what to try next, with a confidence.",
+  "repository": {
+    "url": "https://github.com/AshNicolus/mimir",
+    "source": "github"
+  },
+  "websiteUrl": "https://ashnicolus.github.io/mimir/",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "mimir-learn",
+      "version": "0.2.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {"type": "named", "name": "--from", "value": "mimir-learn[mcp]"},
+        {"type": "positional", "value": "mimir-mcp"}
+      ],
+      "transport": {"type": "stdio"},
+      "environmentVariables": [
+        {
+          "name": "MIMIR_DB_PATH",
+          "description": "Where the memory store lives. Defaults to ~/.mimir/memory.db; point several clients at one path to share it.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
