@@ -509,9 +509,23 @@ mimir-ingest run           # backfills into it too
 - **Passwords stay out of sight.** `memory_stats` and other places that show where
   the store lives mask the password.
 
-Vector recall on Postgres is a full scan with cosine in Python, the same fallback
-SQLite uses without sqlite-vec. It's fine for thousands of embedded rows. A
-pgvector index for larger stores is planned.
+**Vector recall uses pgvector when the server has it.** With an embedder
+configured, Mimir installs the `vector` extension if it can, then builds an HNSW
+index on the first embedding it stores. Nearest-neighbour search then runs in
+Postgres instead of loading every vector into Python. Managed Postgres services
+usually offer pgvector; on your own server, install it first.
+
+- **Existing stores are covered.** The index is built over the embeddings already
+  stored, including rows written before the index existed, with no backfill.
+- **Big stores aren't blocked at startup.** If a store already holds more than
+  10,000 embedded rows, Mimir warns with the `CREATE INDEX CONCURRENTLY`
+  statement to run once by hand, and keeps the scan until then.
+- **Results are approximate.** HNSW can occasionally miss a slightly closer match.
+  When a filtered search comes back with fewer results than asked for, Mimir
+  re-runs it as an exact scan.
+- **No index, same answers.** Without pgvector (or for embeddings of a different
+  dimension, or more than 2,000 dimensions), vector recall is an exact scan in
+  Python, the same fallback SQLite uses without sqlite-vec.
 
 ## Roadmap
 
@@ -535,7 +549,7 @@ pgvector index for larger stores is planned.
 Mimir starts as a single SQLite file and grows by swapping seams, no rewrites:
 
 1. **v1**: SQLite, in-process; WAL with per-thread connections so reads scale across threads while writes serialize.
-2. **v2**: Postgres backend for concurrent multi-agent writes. ✅ Done; a pgvector index is next.
+2. **v2**: Postgres backend for concurrent multi-agent writes, with a pgvector HNSW index for vector recall. ✅ Done.
 3. **v3**: extract the (slow, batch) reflection engine into an async worker.
 4. **v4**: Redis cache for hot/recent experiences on the read path.
 
@@ -550,13 +564,13 @@ What works today, with no LLM anywhere in the read or write path:
 - **Hybrid recall**, keyword and vector fused, with an optional sqlite-vec index and a query-embedding cache.
 - **Staleness handling** through explicit superseding and optional time decay.
 - **An MCP server**, so Claude Code, Codex, and Cursor can share one memory without any code.
-- **A Postgres backend**, for many agents on many machines writing to one store at once, ranking identically to SQLite.
+- **A Postgres backend**, for many agents on many machines writing to one store at once, ranking identically to SQLite, with a pgvector index for vector recall.
 - **Conversation distillation** behind a pluggable seam, for turning a finished transcript into an experience.
 - **Session backfill**, `mimir-ingest`, so memory starts from your existing Claude Code and Cursor history instead of empty.
 - **Reflection**, `reflect()`, synthesizing a pattern across a set of experiences behind the same kind of pluggable seam. Stored as a `Reflection`, and rebuildable rather than authoritative; it does not yet feed back into `recall()` or `recommend()`.
 - **Reliability**: versioned schema with a migration runner, concurrent reads under WAL, and a recall@k / recommendation-accuracy gate in CI.
 
-Not built yet: materialized strategy rows and a pgvector index for the Postgres backend. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](https://github.com/AshNicolus/mimir/blob/main/examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
+Not built yet: materialized strategy rows. See the [Playbook](PLAYBOOK.md) for a basic-to-advanced guide, or run the whole loop yourself in the [demo notebook](https://github.com/AshNicolus/mimir/blob/main/examples/mimir_demo.ipynb). APIs may still change before `1.0`. Feedback and ideas welcome.
 
 ## License
 
