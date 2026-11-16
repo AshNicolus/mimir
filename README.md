@@ -178,6 +178,8 @@ cd mimir
 pip install -e ".[dev]"
 ```
 
+Before committing, run `ruff format .` and `ruff check .`; CI fails if either would change or flag anything.
+
 The docs site is built from this README and the [Playbook](PLAYBOOK.md), so edit those files rather than anything under `docs/`. To preview it (needs Python 3.11 or newer):
 
 ```bash

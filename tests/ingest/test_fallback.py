@@ -53,20 +53,28 @@ def turn(role: str, text: str, minute: int, tools: tuple[str, ...] = ()) -> Turn
 
 
 def test_action_is_what_the_assistant_said_it_did():
-    ep = Episode("claude-code", "s1", [
-        turn("user", "fix the login bug", 0),
-        turn("assistant", "Fixed the token\n  expiry check.", 1, tools=("Edit",)),
-    ])
+    ep = Episode(
+        "claude-code",
+        "s1",
+        [
+            turn("user", "fix the login bug", 0),
+            turn("assistant", "Fixed the token\n  expiry check.", 1, tools=("Edit",)),
+        ],
+    )
     assert heuristic_bucket(ep).action == "Fixed the token expiry check."
 
 
 def test_action_skips_the_pleasantry_after_the_users_reaction():
-    ep = Episode("claude-code", "s1", [
-        turn("user", "fix the login bug", 0),
-        turn("assistant", "Fixed the token expiry check.", 1),
-        turn("user", "thanks, works now", 2),
-        turn("assistant", "You're welcome!", 3),
-    ])
+    ep = Episode(
+        "claude-code",
+        "s1",
+        [
+            turn("user", "fix the login bug", 0),
+            turn("assistant", "Fixed the token expiry check.", 1),
+            turn("user", "thanks, works now", 2),
+            turn("assistant", "You're welcome!", 3),
+        ],
+    )
     assert heuristic_bucket(ep).action == "Fixed the token expiry check."
 
 
@@ -85,17 +93,22 @@ def test_heuristic_rows_do_not_pool_into_one_recommendation():
     memory = Mimir(":memory:")
     for i, work in enumerate(["Patched the login retry loop", "Raised the login pool size"]):
         for n in range(3):
-            ep = Episode("claude-code", f"s{i}{n}", [
-                turn("user", f"login is slow, case {n}", 0),
-                turn("assistant", work, 1, tools=("Bash",)),
-                turn("user", "thanks, works now", 2),
-                turn("assistant", "Glad it helped!", 3),
-            ])
+            ep = Episode(
+                "claude-code",
+                f"s{i}{n}",
+                [
+                    turn("user", f"login is slow, case {n}", 0),
+                    turn("assistant", work, 1, tools=("Bash",)),
+                    turn("user", "thanks, works now", 2),
+                    turn("assistant", "Glad it helped!", 3),
+                ],
+            )
             b = heuristic_bucket(ep)
             memory.record(b.task, b.action, outcome=b.outcome)
     stats = memory.storage.aggregate_actions("login slow")
     assert sorted(s.action for s in stats) == [
-        "Patched the login retry loop", "Raised the login pool size",
+        "Patched the login retry loop",
+        "Raised the login pool size",
     ]
 
 

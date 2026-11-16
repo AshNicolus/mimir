@@ -80,8 +80,6 @@ def test_main_parses_report_subcommand(tmp_path, monkeypatch, capsys):
     memory = Mimir(str(tmp_path / "test.db"))
     memory.record("a task", "an action", outcome="success")
     memory.close()
-    monkeypatch.setattr(
-        "sys.argv", ["mimir-ingest", "--db", str(tmp_path / "test.db"), "report"]
-    )
+    monkeypatch.setattr("sys.argv", ["mimir-ingest", "--db", str(tmp_path / "test.db"), "report"])
     cli.main()
     assert "experiences" in capsys.readouterr().out
