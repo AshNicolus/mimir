@@ -20,7 +20,7 @@
 ```python
 from mimir import Mimir
 
-with Mimir(":memory:") as memory:  # throwaway store; Mimir() persists to ~/.mimir/memory.db
+with Mimir(":memory:") as memory:  # throwaway store; Mimir() saves to ./mimir.db
     # Past tickets: one fix keeps working...
     for task in ["Login is slow at peak", "Login times out under load", "Slow login after deploy"]:
         memory.record(task=task, action="Cache session lookups in Redis", outcome="success", score=0.9)
@@ -104,20 +104,21 @@ And it costs almost nothing to adopt: one `pip install`, a local SQLite file, no
 
 ## The idea
 
-Instead of storing documents, embeddings, and metadata, Mimir stores **experiences**:
+Mimir stores **experiences**, not documents:
 
 ```
-Problem  →  Action  →  Outcome  →  Confidence  →  Context  →  Time
+Task  →  Action  →  Outcome  →  Score  →  Context  →  Time
 ```
 
-From a stream of experiences, Mimir reflects, extracts reusable strategies, and recommends actions for new tasks, so the agent gets measurably better over time.
+Three calls cover it: `record` after a task, then `recall` and `recommend` before
+the next one.
 
 ```python
 from mimir import Mimir
 
-memory = Mimir()
+memory = Mimir()  # SQLite file mimir.db in the current directory
 
-# Record what happened
+# After a task: what was done and how it went
 memory.record(
     task="Fix authentication timeout",
     action="Implemented Redis caching",
@@ -125,25 +126,31 @@ memory.record(
     score=0.95,
 )
 
-# Recall relevant past experience
+# Before the next one: relevant past attempts, failures included
 past = memory.recall("authentication latency")
 
-# Get a recommended strategy with confidence
-strategy = memory.recommend("login timeout")
-# -> Strategy: "Redis caching"  |  confidence: 0.80  |  based on 23 successes / 2 failures
+# ...and the action with the best track record
+rec = memory.recommend("login timeout")
+rec.recommended_action  # "Implemented Redis caching"
+rec.confidence          # 0.23 after one success; rises as successes add up
 ```
 
 ## How it differs from AGENTS.md / CLAUDE.md
 
+AGENTS.md holds the rules someone wrote. Mimir holds what your agents tried and
+whether it worked.
+
 | | AGENTS.md / CLAUDE.md | Mimir |
 |---|---|---|
-| Knowledge type | Static, hand-written rules | Dynamic, learned from outcomes |
-| Updates | Manually edited | Updates itself from results |
-| Example | "Use FastAPI. Use PostgreSQL." | "Redis caching solved auth latency 23/25 times (92%)." |
-| Failures | Not tracked | First-class: agents stop repeating mistakes |
+| Holds | Rules and conventions | Every attempt: task, action, outcome |
+| Kept current by | Hand edits | Each recorded outcome; stale evidence is superseded or fades with a half-life |
+| Failures | Only if someone writes them down | Recorded with the reason; an action that has never worked is never recommended |
+| Token cost | The whole file, every session, growing with each rule | Only what the task needs: one recommendation, or the 5 most relevant attempts |
+| Team state | One repo's notes, as of the last edit | One shared store (SQLite on one machine, Postgres across many): what has been tried, what worked, what is a dead end |
+| Trust | Whatever the file says | A confidence from real counts, citing the experiences behind it |
 
-AGENTS.md answers *"What should the agent remember?"*
-Mimir answers *"How does an agent accumulate experience and become wiser over time?"*
+Use both: AGENTS.md for what doesn't change ("use FastAPI"), Mimir for what the
+evidence decides ("the Redis fix works here; the pool-size bump doesn't").
 
 ## Design principles
 
