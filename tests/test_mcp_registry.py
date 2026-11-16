@@ -12,8 +12,12 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_server_json_matches_package():
-    server = json.loads((ROOT / "server.json").read_text())
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
     assert server["version"] == version
     assert [p["version"] for p in server["packages"]] == [version]
-    assert f"<!-- mcp-name: {server['name']} -->" in (ROOT / "README.md").read_text()
+    assert f"<!-- mcp-name: {server['name']} -->" in (ROOT / "README.md").read_text(
+        encoding="utf-8"
+    )
