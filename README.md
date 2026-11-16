@@ -143,7 +143,7 @@ whether it worked.
 | | AGENTS.md / CLAUDE.md | Mimir |
 |---|---|---|
 | Holds | Rules and conventions | Every attempt: task, action, outcome |
-| Kept current by | Hand edits | Each recorded outcome; stale evidence is superseded or fades with a half-life |
+| Kept current by | Hand edits | Each recorded outcome; replace stale entries with `supersede()`, or set `half_life_days` to let old evidence fade |
 | Failures | Only if someone writes them down | Recorded with the reason; an action that has never worked is never recommended |
 | Token cost | The whole file, every session, growing with each rule | Only what the task needs: one recommendation, or the 5 most relevant attempts |
 | Team state | One repo's notes, as of the last edit | One shared store (SQLite on one machine, Postgres across many): what has been tried, what worked, what is a dead end |
