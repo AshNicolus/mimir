@@ -48,6 +48,18 @@ the number rises as more tickets confirm the fix.
 mimir-ingest run --dry-run   # show what Mimir would learn from your history; writes nothing
 ```
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b1d77e72c3e4d5badd17a314e05d6a26e579088d4272762e9f08e08d8d1c99d3 -->
+
+For Cursor:
+
+```bash
+mimir-ingest run --source cursor --dry-run
+```
+
+<!-- /coderabbit-ai-generated:v1 -->
+
 ---
 
 ## The problem
