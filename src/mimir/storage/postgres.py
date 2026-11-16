@@ -134,9 +134,7 @@ class PostgresStorage(Storage):
         clusterer: ActionClusterer | None = None,
     ) -> None:
         if psycopg is None:
-            raise ImportError(
-                'PostgresStorage needs psycopg: pip install "mimir-learn[postgres]"'
-            )
+            raise ImportError('PostgresStorage needs psycopg: pip install "mimir-learn[postgres]"')
         if not SCHEMA_NAME.fullmatch(schema) or schema.lower().startswith("pg_"):
             raise ValueError(
                 f"schema must be a plain SQL identifier not starting with pg_, got {schema!r}"

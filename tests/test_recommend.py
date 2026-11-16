@@ -213,9 +213,7 @@ def test_recommend_can_include_superseded(memory):
 
 
 def record_aged(memory, task, action, days_ago):
-    exp = Experience(
-        task=task, action=action, created_at=utcnow() - timedelta(days=days_ago)
-    )
+    exp = Experience(task=task, action=action, created_at=utcnow() - timedelta(days=days_ago))
     memory.write(exp)
 
 

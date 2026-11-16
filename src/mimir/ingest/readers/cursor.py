@@ -131,8 +131,8 @@ def read_all_sessions(db_path: Path | None = None) -> dict[str, list[Turn]]:
             except json.JSONDecodeError:
                 continue
             composer_id = key.split(":", 1)[1]
-            created_at = (
-                epoch_ms_to_datetime(composer.get("createdAt")) or datetime.now(timezone.utc)
+            created_at = epoch_ms_to_datetime(composer.get("createdAt")) or datetime.now(
+                timezone.utc
             )
             turns = read_composer(cursor, composer_id, created_at)
             if turns:

@@ -160,9 +160,7 @@ def test_ann_backfills_existing_json_embeddings(tmp_path):
     reopened = Mimir(db, embedder=TopicEmbedder())
     try:
         assert reopened.storage.vec_dim == 3
-        count = reopened.storage.conn.execute(
-            "SELECT COUNT(*) FROM vec_experiences"
-        ).fetchone()[0]
+        count = reopened.storage.conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
         assert count == 1
         results = reopened.recall("kitten")
         assert results and results[0].task == "adopt a feline companion"
@@ -196,9 +194,7 @@ def test_changing_embedder_dimension_warns_instead_of_silently_dropping(tmp_path
     try:
         with pytest.warns(VectorIndexWarning, match="4 dimensions"):
             memory.record("buy a canine leash", "go to the pet store")
-        indexed = memory.storage.conn.execute(
-            "SELECT COUNT(*) FROM vec_experiences"
-        ).fetchone()[0]
+        indexed = memory.storage.conn.execute("SELECT COUNT(*) FROM vec_experiences").fetchone()[0]
         assert indexed == 1  # the new row stayed out of the index
         assert memory.recall("leash")  # but recall still finds it
     finally:
