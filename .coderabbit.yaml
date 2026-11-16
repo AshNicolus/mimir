@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit PR review config. Reference: https://docs.coderabbit.ai/reference/configuration
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    # Dependabot bumps are pinned action versions; CI already covers them.
+    ignore_usernames:
+      - dependabot[bot]
+  tools:
+    # CI already enforces `ruff check` and `ruff format --check`; don't double-report.
+    ruff:
+      enabled: false
+  path_instructions:
+    - path: "src/mimir/storage/**"
+      instructions: |
+        SQLite and Postgres backends must return the same results for the same data:
+        Postgres BM25 mirrors FTS5 (k1=1.2, b=0.75, IDF floor 1e-6) over Mimir's own
+        tokenizer. Flag any change that touches one backend's search, scoring or
+        schema without the matching change in the other. All SQL values must be bound
+        parameters; identifiers (schema names) must go through the existing validation.
+        Postgres migrations must run under the advisory lock, and DSN passwords must
+        never reach logs, warnings or exception messages (use redact()).
+    - path: "src/mimir/{core,ranking}.py"
+      instructions: |
+        recommend() confidence is a Beta-posterior lower bound with a Jeffreys prior,
+        and explore=True uses Thompson sampling. Outcome scores are in [0, 1]. Check
+        that changes keep confidence calibrated (few samples must not look certain)
+        and that the public API in mimir/__init__.py stays backward compatible.
+    - path: "src/mimir/ingest/**"
+      instructions: |
+        Ingest reads local agent transcripts (Claude Code, Cursor). Watch for
+        malformed or partial transcript lines crashing the run, and for secrets or
+        file contents being stored verbatim when a summary is intended.
+    - path: "tests/**"
+      instructions: |
+        Postgres tests are gated by MIMIR_TEST_POSTGRES_DSN (and pgvector ones by
+        MIMIR_TEST_PGVECTOR=1); tests that inspect SQLite internals use the
+        sqlite_only marker. New backend behaviour should be tested on both backends.
+    - path: ".github/workflows/**"
+      instructions: |
+        Keep permissions minimal per job. The job names lint, test and "Build & test"
+        are required status checks; renaming them blocks merges. PyPI publishing uses
+        Trusted Publishing, so no API tokens should appear.
+    - path: "docs/**"
+      instructions: |
+        docs/README.md and docs/PLAYBOOK.md only include the root README.md and
+        PLAYBOOK.md via snippets. Content edits belong in the root files.
+
+chat:
+  auto_reply: true
